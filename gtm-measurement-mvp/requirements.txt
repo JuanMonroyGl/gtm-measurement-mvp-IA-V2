@@ -1,1 +1,2 @@
-# Phase 1 uses only Python standard library.
+rapidocr-onnxruntime>=1.4.4
+opencv-python-headless>=4.12.0.88

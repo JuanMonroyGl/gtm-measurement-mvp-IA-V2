@@ -29,6 +29,106 @@ def ensure_output_dir(repo_root: Path, case_id: str) -> Path:
     return output_dir
 
 
+def _incomplete_fields(interaction: dict[str, Any]) -> list[str]:
+    required = [
+        "tipo_evento",
+        "activo",
+        "seccion",
+        "flujo",
+        "elemento",
+        "ubicacion",
+        "plan_url",
+        "target_url",
+        "page_path_regex",
+        "texto_referencia",
+        "selector_candidato",
+        "selector_activador",
+        "match_count",
+        "confidence",
+    ]
+    return [field for field in required if interaction.get(field) is None]
+
+
+def _render_report(
+    case_id: str,
+    parsed_plan: dict[str, Any],
+    measurement_case: dict[str, Any],
+    fetch_warning: str | None,
+    dom_warning: str | None,
+    selector_build_result: dict[str, Any],
+    selector_validation: dict[str, Any],
+) -> str:
+    lines = [
+        f"# Reporte {case_id}",
+        "",
+        "## Estado",
+        "- Extracción real de texto desde imágenes: habilitada.",
+        "- Scraping complejo y generación GTM final: pendiente por diseño de fase.",
+        "",
+        "## Evidencia por imagen",
+    ]
+
+    for evidence in parsed_plan.get("evidence", []):
+        lines.append(f"- image: {evidence.get('image_path')}")
+        lines.append(f"  - method: {evidence.get('extraction_method')}")
+        lines.append(f"  - confidence: {evidence.get('confidence')}")
+
+        plan_urls = evidence.get("plan_url_candidates") or []
+        if plan_urls:
+            lines.append(f"  - plan_url_candidates: {', '.join(plan_urls)}")
+
+        extracted_lines = evidence.get("extracted_lines") or []
+        sample = extracted_lines[:3]
+        if sample:
+            lines.append(f"  - sample_text: {' | '.join(sample)}")
+        else:
+            lines.append("  - sample_text: <sin texto>")
+
+    lines.extend([
+        "",
+        "## Interacciones detectadas",
+        f"- total: {len(measurement_case.get('interacciones', []))}",
+    ])
+
+    for idx, interaction in enumerate(measurement_case.get("interacciones", []), start=1):
+        lines.append(f"- [{idx}] tipo_evento: {interaction.get('tipo_evento')}")
+        lines.append(f"  - flujo: {interaction.get('flujo')}")
+        lines.append(f"  - elemento: {interaction.get('elemento')}")
+        lines.append(f"  - ubicacion: {interaction.get('ubicacion')}")
+        lines.append(f"  - texto_referencia: {interaction.get('texto_referencia')}")
+        lines.append(f"  - confidence: {interaction.get('confidence')}")
+
+        for warning in interaction.get("warnings", []):
+            lines.append(f"  - warning: {warning}")
+
+        null_fields = _incomplete_fields(interaction)
+        if null_fields:
+            lines.append(f"  - null_fields: {', '.join(null_fields)}")
+
+    lines.extend([
+        "",
+        "## Scraping/DOM",
+        f"- fetch_warning: {fetch_warning}",
+        f"- dom_warning: {dom_warning}",
+        "",
+        "## Selectores",
+        f"- build_status: {selector_build_result.get('status')}",
+        f"- validation_status: {selector_validation.get('status')}",
+    ])
+
+    parser_warnings = parsed_plan.get("warnings") or []
+    if parser_warnings:
+        lines.append("")
+        lines.append("## Warnings del parser")
+        lines.extend([f"- {w}" for w in parser_warnings])
+
+    lines.extend([
+        "",
+        "## Alertas",
+        "- Este resultado NO está listo para producción sin revisión humana.",
+    ])
+
+    return "\n".join(lines) + "\n"
 def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
     case_dir = repo_root / "inputs" / case_id
     images_dir = case_dir / "images"
@@ -69,29 +169,16 @@ def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
     tag_template_path.write_text(tag_template, encoding="utf-8")
     trigger_selector_path.write_text(trigger_selector, encoding="utf-8")
 
-    report_lines = [
-        f"# Reporte {case_id}",
-        "",
-        "## Estado",
-        "- Pipeline en modo esqueleto (Fase 1).",
-        "- Sin scraping complejo ni generación GTM final.",
-        "",
-        "## Parser de imágenes",
-        f"- parser_status: {parsed_plan.get('parser_status')}",
-        f"- image_count: {parsed_plan.get('image_count')}",
-        "",
-        "## Scraping/DOM",
-        f"- fetch_warning: {fetch_result.warning}",
-        f"- dom_warning: {dom_snapshot.warning}",
-        "",
-        "## Selectores",
-        f"- build_status: {selector_build_result.get('status')}",
-        f"- validation_status: {selector_validation.get('status')}",
-        "",
-        "## Alertas",
-        "- Este resultado NO está listo para producción sin revisión humana.",
-    ]
-    report_path.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+    report_text = _render_report(
+        case_id=case_id,
+        parsed_plan=parsed_plan,
+        measurement_case=measurement_case,
+        fetch_warning=fetch_result.warning,
+        dom_warning=dom_snapshot.warning,
+        selector_build_result=selector_build_result,
+        selector_validation=selector_validation,
+    )
+    report_path.write_text(report_text, encoding="utf-8")
 
     return {
         "case_id": case_id,
