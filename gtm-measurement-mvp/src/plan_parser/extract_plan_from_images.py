@@ -8,6 +8,7 @@ Phase 2 goal:
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -124,16 +125,56 @@ def _extract_lines_with_ocr(image_path: Path, ocr: Any) -> list[str]:
     return lines
 
 
+def _load_sidecar_evidence(case_images_dir: Path) -> list[ImageEvidence]:
+    """Load pre-extracted text evidence from inputs/<case_id>/image_evidence.json if present."""
+    sidecar_path = case_images_dir.parent / "image_evidence.json"
+    if not sidecar_path.exists():
+        return []
+
+    try:
+        payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+
+    entries = payload if isinstance(payload, list) else payload.get("images", [])
+    evidences: list[ImageEvidence] = []
+
+    for entry in entries:
+        image_name = entry.get("image")
+        lines = entry.get("lines") or []
+        if not image_name:
+            continue
+        image_path = case_images_dir / image_name
+        extracted_text = "\n".join(lines) if lines else None
+        evidences.append(
+            ImageEvidence(
+                image_path=str(image_path),
+                extracted_lines=lines,
+                extracted_text=extracted_text,
+                extraction_method="sidecar_text_support",
+                confidence=0.7 if lines else 0.0,
+                plan_url_candidates=_extract_urls(extracted_text or ""),
+            )
+        )
+
+    return evidences
+
+
 def extract_support_text_from_images(case_images_dir: Path) -> list[ImageEvidence]:
     """Extract textual support evidence from images.
 
-    This extraction is multimodal-ready by interface, but currently uses OCR text
-    extraction as the available first signal.
+    Priority:
+    1. OCR via RapidOCR when available.
+    2. Sidecar evidence file (`image_evidence.json`) when OCR is unavailable.
     """
     images = discover_case_images(case_images_dir)
     evidences: list[ImageEvidence] = []
 
     if RapidOCR is None:
+        sidecar_evidences = _load_sidecar_evidence(case_images_dir)
+        if sidecar_evidences:
+            return sidecar_evidences
+
         for image_path in images:
             evidences.append(
                 ImageEvidence(
