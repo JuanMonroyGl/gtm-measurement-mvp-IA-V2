@@ -1,0 +1,128 @@
+# =========================
+# OS / Explorer junk
+# =========================
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+ehthumbs.db
+
+# =========================
+# Editors / IDEs
+# =========================
+.vscode/
+.idea/
+*.code-workspace
+*.suo
+*.user
+*.userossc
+*.sln.docstates
+*.swp
+*.swo
+*~
+
+# =========================
+# Python cache / bytecode
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# =========================
+# Python native / compiled
+# =========================
+*.so
+*.pyd
+*.dll
+
+# =========================
+# Virtual environments
+# =========================
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# =========================
+# Packaging / build
+# =========================
+build/
+dist/
+site/
+.eggs/
+*.egg
+*.egg-info/
+pip-wheel-metadata/
+
+# =========================
+# Test / coverage / tooling
+# =========================
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+nosetests.xml
+*.cover
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Logs / temp
+# =========================
+*.log
+logs/
+tmp/
+temp/
+.cache/
+
+# =========================
+# Secrets / env files
+# =========================
+.env
+.env.*
+*.env
+*.secret
+*.secrets
+secrets/
+credentials/
+*.pem
+*.key
+
+# =========================
+# Local databases / misc
+# =========================
+*.sqlite
+*.sqlite3
+
+# =========================
+# Runtime outputs
+# =========================
+outputs/**
+!outputs/.gitkeep
+!outputs/**/.gitkeep
+
+# =========================
+# Optional: ignore raw inputs
+# Descomenta esto si NO quieres subir
+# imágenes/casos reales al repo
+# =========================
+# inputs/**
+# !inputs/.gitkeep
+# !inputs/**/.gitkeep
+
+# =========================
+# Optional: keep empty folders
+# con archivos .gitkeep
+# =========================
+!.gitkeep
