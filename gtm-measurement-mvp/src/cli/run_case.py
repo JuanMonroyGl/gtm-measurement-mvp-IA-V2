@@ -1,4 +1,4 @@
-"""CLI entrypoint to run a measurement case skeleton pipeline."""
+"""CLI entrypoint to run the measurement case pipeline."""
 
 from __future__ import annotations
 
@@ -27,6 +27,14 @@ def ensure_output_dir(repo_root: Path, case_id: str) -> Path:
     output_dir = repo_root / "outputs" / case_id
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
+
+
+def _load_previous_measurement_case(output_dir: Path) -> dict[str, Any] | None:
+    previous_path = output_dir / "measurement_case.json"
+    if not previous_path.exists():
+        return None
+    with previous_path.open("r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def _incomplete_fields(interaction: dict[str, Any]) -> list[str]:
@@ -62,7 +70,8 @@ def _render_report(
         f"# Reporte {case_id}",
         "",
         "## Estado",
-        "- Extracción real de texto desde imágenes: habilitada.",
+        "- Extracción de texto desde imágenes: habilitada cuando OCR está disponible.",
+        "- Selección y validación básica de selectores: habilitada.",
         "- Scraping complejo y generación GTM final: pendiente por diseño de fase.",
         "",
         "## Evidencia por imagen",
@@ -86,9 +95,14 @@ def _render_report(
 
     lines.extend([
         "",
+        "## DOM usado para validación",
+        f"- render_engine: {selector_build_result.get('render_engine')}",
+        "",
         "## Interacciones detectadas",
         f"- total: {len(measurement_case.get('interacciones', []))}",
     ])
+
+    selector_evidence = selector_build_result.get("selector_evidence") or []
 
     for idx, interaction in enumerate(measurement_case.get("interacciones", []), start=1):
         lines.append(f"- [{idx}] tipo_evento: {interaction.get('tipo_evento')}")
@@ -96,7 +110,14 @@ def _render_report(
         lines.append(f"  - elemento: {interaction.get('elemento')}")
         lines.append(f"  - ubicacion: {interaction.get('ubicacion')}")
         lines.append(f"  - texto_referencia: {interaction.get('texto_referencia')}")
+        lines.append(f"  - selector_candidato: {interaction.get('selector_candidato')}")
+        lines.append(f"  - selector_activador: {interaction.get('selector_activador')}")
+        lines.append(f"  - match_count: {interaction.get('match_count')}")
         lines.append(f"  - confidence: {interaction.get('confidence')}")
+
+        evidence = next((e for e in selector_evidence if e.get("index") == idx), None)
+        if evidence and evidence.get("evidence"):
+            lines.append(f"  - evidencia_selector: {evidence.get('evidence')}")
 
         for warning in interaction.get("warnings", []):
             lines.append(f"  - warning: {warning}")
@@ -114,6 +135,7 @@ def _render_report(
         "## Selectores",
         f"- build_status: {selector_build_result.get('status')}",
         f"- validation_status: {selector_validation.get('status')}",
+        f"- validated_interactions: {selector_validation.get('validated_interactions')}",
     ])
 
     parser_warnings = parsed_plan.get("warnings") or []
@@ -129,6 +151,8 @@ def _render_report(
     ])
 
     return "\n".join(lines) + "\n"
+
+
 def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
     case_dir = repo_root / "inputs" / case_id
     images_dir = case_dir / "images"
@@ -138,6 +162,12 @@ def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
 
     parsed_plan = parse_measurement_plan(images_dir)
     measurement_case = normalize_case(metadata=metadata, parsed_plan=parsed_plan)
+
+    # Keep existing interactions when OCR is unavailable and a prior case exists.
+    if not measurement_case.get("interacciones"):
+        previous_case = _load_previous_measurement_case(output_dir)
+        if previous_case and previous_case.get("interacciones"):
+            measurement_case["interacciones"] = previous_case.get("interacciones", [])
 
     target_url = measurement_case.get("target_url")
     fetch_result = fetch_html(target_url=target_url) if target_url else fetch_html(target_url="")
@@ -150,6 +180,8 @@ def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
         measurement_case=measurement_case,
         dom_snapshot=dom_snapshot.__dict__,
     )
+    selector_build_result["render_engine"] = dom_snapshot.render_engine
+
     selector_validation = validate_selector_candidates(
         measurement_case=measurement_case,
         dom_snapshot=dom_snapshot.__dict__,
@@ -191,7 +223,7 @@ def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run measurement case pipeline skeleton")
+    parser = argparse.ArgumentParser(description="Run measurement case pipeline")
     parser.add_argument("--case-id", required=True, help="Case id, e.g. case_001")
     parser.add_argument(
         "--repo-root",

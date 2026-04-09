@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -34,6 +35,14 @@ def _pick_plan_url(image_candidates: list[str], metadata_plan_url: str | None) -
     if image_candidates:
         return image_candidates[0]
     return metadata_plan_url
+
+
+def _normalize_text_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = re.sub(r"\s+", " ", value).strip()
+    cleaned = cleaned.rstrip(".,;:")
+    return cleaned or None
 
 
 def normalize_case(metadata: dict[str, Any], parsed_plan: dict[str, Any]) -> dict[str, Any]:
@@ -72,16 +81,16 @@ def normalize_case(metadata: dict[str, Any], parsed_plan: dict[str, Any]) -> dic
 
         normalized_interactions.append(
             {
-                "tipo_evento": fields.get("tipo_evento"),
+                "tipo_evento": _normalize_text_value(fields.get("tipo_evento")),
                 "activo": metadata_activo,
                 "seccion": metadata_seccion,
-                "flujo": fields.get("flujo"),
-                "elemento": fields.get("elemento"),
-                "ubicacion": fields.get("ubicacion"),
+                "flujo": _normalize_text_value(fields.get("flujo")),
+                "elemento": _normalize_text_value(fields.get("elemento")),
+                "ubicacion": _normalize_text_value(fields.get("ubicacion")),
                 "plan_url": image_plan_url,
                 "target_url": metadata_target_url,
                 "page_path_regex": metadata_page_path_regex,
-                "texto_referencia": fields.get("texto_referencia"),
+                "texto_referencia": _normalize_text_value(fields.get("texto_referencia")),
                 "selector_candidato": None,
                 "selector_activador": None,
                 "match_count": None,
