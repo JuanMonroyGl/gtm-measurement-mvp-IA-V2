@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/measurement_case.schema.json",
+  "title": "Measurement Case",
+  "type": "object",
+  "required": [
+    "case_id",
+    "activo",
+    "seccion",
+    "plan_url",
+    "target_url",
+    "page_path_regex",
+    "interacciones"
+  ],
+  "properties": {
+    "case_id": { "type": "string", "minLength": 1 },
+    "activo": { "type": ["string", "null"] },
+    "seccion": { "type": ["string", "null"] },
+    "plan_url": { "type": ["string", "null"] },
+    "target_url": { "type": ["string", "null"] },
+    "page_path_regex": { "type": ["string", "null"] },
+    "notes": { "type": ["string", "null"] },
+    "interacciones": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "tipo_evento",
+          "activo",
+          "seccion",
+          "flujo",
+          "elemento",
+          "ubicacion",
+          "plan_url",
+          "target_url",
+          "page_path_regex",
+          "texto_referencia",
+          "selector_candidato",
+          "selector_activador",
+          "match_count",
+          "confidence",
+          "warnings"
+        ],
+        "properties": {
+          "tipo_evento": { "type": ["string", "null"] },
+          "activo": { "type": ["string", "null"] },
+          "seccion": { "type": ["string", "null"] },
+          "flujo": { "type": ["string", "null"] },
+          "elemento": { "type": ["string", "null"] },
+          "ubicacion": { "type": ["string", "null"] },
+          "plan_url": { "type": ["string", "null"] },
+          "target_url": { "type": ["string", "null"] },
+          "page_path_regex": { "type": ["string", "null"] },
+          "texto_referencia": { "type": ["string", "null"] },
+          "selector_candidato": { "type": ["string", "null"] },
+          "selector_activador": { "type": ["string", "null"] },
+          "match_count": { "type": ["integer", "null"], "minimum": 0 },
+          "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+          "warnings": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
