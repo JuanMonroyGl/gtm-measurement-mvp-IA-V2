@@ -80,6 +80,9 @@ Cada interacción debe incluir:
   - scraping/render del DOM
   - construcción de selectores
   - generación de JS
+- Patrón GTM estándar del proyecto: `eventData` + `setDataEvent(...)` + guard `document.location.href.search('appspot.com') == -1` antes de `analytics.track(...)`.
+
+- En GTM, las variables de helper (click text / text close / clean) pueden llegar como función o como valor ya resuelto; el generador debe soportar ambos casos.
 
 ## Reglas de entrada del caso
 - Las imágenes del plan estarán en `inputs/<case_id>/images/`
