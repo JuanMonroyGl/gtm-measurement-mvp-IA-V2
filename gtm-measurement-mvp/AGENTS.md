@@ -80,6 +80,7 @@ Cada interacción debe incluir:
   - scraping/render del DOM
   - construcción de selectores
   - generación de JS
+- Patrón GTM estándar del proyecto: `eventData` + `setDataEvent(...)` + guard `document.location.href.search('appspot.com') == -1` antes de `analytics.track(...)`.
 
 ## Reglas de entrada del caso
 - Las imágenes del plan estarán en `inputs/<case_id>/images/`

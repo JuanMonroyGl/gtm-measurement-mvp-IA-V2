@@ -1,0 +1,67 @@
+[
+  {
+    "image": "01.png",
+    "lines": [
+      "Evento: Clic Boton",
+      "activo: bancolombia",
+      "seccion: pagos",
+      "flujo: apple pay",
+      "elemento: {{texto del boton}}",
+      "Ej: descarga la app",
+      "ubicacion: banner principal",
+      "https://bancolombia-qa.apps.ambientesbc.com/$project/9262404563-rediseno-billeteras/pagos/apple-pay"
+    ]
+  },
+  {
+    "image": "02.png",
+    "lines": [
+      "Evento: Clic Card",
+      "activo: bancolombia",
+      "seccion: pagos",
+      "flujo: apple pay",
+      "elemento: {{texto de la card}}",
+      "Ej: pagas sin contacto",
+      "ubicacion: beneficios",
+      "https://bancolombia-qa.apps.ambientesbc.com/$project/9262404563-rediseno-billeteras/pagos/apple-pay"
+    ]
+  },
+  {
+    "image": "03.png",
+    "lines": [
+      "Evento: Clic Boton",
+      "activo: bancolombia",
+      "seccion: pagos",
+      "flujo: billetera de google",
+      "elemento: {{texto del boton}}",
+      "Ej: celular | apple watch | app mi bancolombia",
+      "ubicacion: inscribir tus tarjetas",
+      "https://bancolombia-qa.apps.ambientesbc.com/$project/9262404563-rediseno-billeteras/pagos/g0ogle-pay"
+    ]
+  },
+  {
+    "image": "04.png",
+    "lines": [
+      "Evento: Clic Tap",
+      "activo: bancolombia",
+      "seccion: pagos",
+      "flujo: apple pay",
+      "elemento: {{texto del tap}}",
+      "Ej: tiene algun costo usar apple pay",
+      "ubicacion: te perdiste algo",
+      "https://bancolombia-qa.apps.ambientesbc.com/$project/9262404563-rediseno-billeteras/pagos/apple-pay"
+    ]
+  },
+  {
+    "image": "05.png",
+    "lines": [
+      "Evento: Clic Link",
+      "activo: bancolombia",
+      "seccion: pagos",
+      "flujo: apple pay",
+      "elemento: {{texto del link}}",
+      "Ej: ver documento pdf",
+      "ubicacion: terminos y condiciones",
+      "https://bancolombia-qa.apps.ambientesbc.com/$project/9262404563-rediseno-billeteras/pagos/apple-pay"
+    ]
+  }
+]
