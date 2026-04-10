@@ -12,7 +12,7 @@ def build_consolidated_trigger_selector(measurement_case: dict[str, Any]) -> str
     """Build consolidated trigger selector with `selector` and `selector *`."""
     selectors: list[str] = []
     for interaction in measurement_case.get("interacciones", []):
-        selector = interaction.get("selector_candidato")
+        selector = interaction.get("selector_activador") or interaction.get("selector_candidato")
         if not selector:
             continue
         selectors.append(selector)

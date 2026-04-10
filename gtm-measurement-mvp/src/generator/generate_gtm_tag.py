@@ -5,30 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 
-SELECTOR_RULES = [
-    ('a[href*="apps.apple.com"]', "Clic Boton", "apple pay", "banner principal"),
-    (
-        '.card-razon-beneficio-vivienda .contenido-card-razon-beneficio-vivienda',
-        "Clic Card",
-        "apple pay",
-        "beneficios",
-    ),
-    (
-        '.contenedor-buttons-tabs .swiper .swiper-wrapper .swiper-slide',
-        "Clic Boton",
-        "billetera de google",
-        "inscribir tus tarjetas",
-    ),
-    (
-        '.contenido-preguntas-frecuentes .acordeon-pregunta-frecuente',
-        "Clic Tap",
-        "apple pay",
-        "te perdiste algo",
-    ),
-    ('.descripcion-alerta-color p strong', "Clic Link", "apple pay", "terminos y condiciones"),
-]
-
-
 def _escape_js(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
@@ -55,7 +31,22 @@ def build_tag_template(measurement_case: dict[str, Any]) -> str:
         "    value = (typeof clean === 'function') ? clean(value || '') : (value || '');",
     ]
 
-    for idx, (selector, event_name, flujo, ubicacion) in enumerate(SELECTOR_RULES):
+    interactions = measurement_case.get("interacciones", [])
+    selector_rules: list[tuple[str, str, str, str]] = []
+    for interaction in interactions:
+        selector = interaction.get("selector_activador") or interaction.get("selector_candidato")
+        if not selector:
+            continue
+        selector_rules.append(
+            (
+                str(selector),
+                str(interaction.get("tipo_evento") or "Clic Boton"),
+                str(interaction.get("flujo") or ""),
+                str(interaction.get("ubicacion") or ""),
+            )
+        )
+
+    for idx, (selector, event_name, flujo, ubicacion) in enumerate(selector_rules):
         prefix = "if" if idx == 0 else "else if"
         lines.extend(
             [
@@ -67,6 +58,13 @@ def build_tag_template(measurement_case: dict[str, Any]) -> str:
                 f"        if (document.location.href.search('appspot.com') == -1) {{analytics.track('{_escape_js(event_name)}', data)}};",
                 "        return;",
                 "    }",
+            ]
+        )
+
+    if not selector_rules:
+        lines.extend(
+            [
+                "    // No interaction rules available for this case.",
             ]
         )
 
