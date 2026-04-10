@@ -1,0 +1,9 @@
+{
+  "case_id": "case_002",
+  "activo": "bancolombia",
+  "seccion": "creditos",
+  "plan_url": "https://www.bancolombia.com/personas/creditos/consumo/compra-cartera",
+  "target_url": "https://www.bancolombia.com/personas/creditos/consumo/compra-cartera",
+  "page_path_regex": "/personas/creditos/consumo/compra-cartera",
+  "notes": "Case 002 - compra cartera"
+}
