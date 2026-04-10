@@ -34,7 +34,7 @@ def build_tag_template(measurement_case: dict[str, Any]) -> str:
     interactions = measurement_case.get("interacciones", [])
     selector_rules: list[tuple[str, str, str, str]] = []
     for interaction in interactions:
-        selector = interaction.get("selector_activador") or interaction.get("selector_candidato")
+        selector = interaction.get("selector_candidato") or interaction.get("selector_activador")
         if not selector:
             continue
         selector_rules.append(

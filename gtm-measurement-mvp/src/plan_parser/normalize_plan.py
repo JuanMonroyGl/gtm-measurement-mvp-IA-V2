@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 
 INTERACTION_FIELDS = [
@@ -43,6 +44,24 @@ def _normalize_text_value(value: str | None) -> str | None:
     cleaned = re.sub(r"\s+", " ", value).strip()
     cleaned = cleaned.rstrip(".,;:")
     return cleaned or None
+
+
+def _derive_top_level_section(*, target_url: str | None, plan_url: str | None) -> str | None:
+    """Derive top-level site section from URL path.
+
+    Example:
+    - /personas/creditos/consumo/compra-cartera -> personas
+    - /pagos/apple-pay -> pagos
+    """
+    source = target_url or plan_url
+    if not source:
+        return None
+    try:
+        path = urlparse(source).path or ""
+    except Exception:
+        return None
+    parts = [p for p in path.split("/") if p]
+    return parts[0] if parts else None
 
 
 def _coalesce_metadata_interactions(metadata: dict[str, Any]) -> list[dict[str, Any]]:
@@ -99,6 +118,19 @@ def normalize_case(metadata: dict[str, Any], parsed_plan: dict[str, Any]) -> dic
     metadata_plan_url = metadata.get("plan_url")
     metadata_target_url = metadata.get("target_url")
     metadata_page_path_regex = metadata.get("page_path_regex")
+    derived_seccion = _derive_top_level_section(
+        target_url=metadata_target_url,
+        plan_url=metadata_plan_url,
+    )
+    final_seccion = metadata_seccion
+    use_url_derived_seccion = False
+    if derived_seccion and metadata_seccion:
+        if derived_seccion.strip().lower() != str(metadata_seccion).strip().lower():
+            use_url_derived_seccion = True
+            final_seccion = derived_seccion
+    elif derived_seccion and not metadata_seccion:
+        use_url_derived_seccion = True
+        final_seccion = derived_seccion
 
     for raw in parsed_plan.get("interactions_raw", []):
         fields = raw.get("fields", {})
@@ -111,18 +143,20 @@ def normalize_case(metadata: dict[str, Any], parsed_plan: dict[str, Any]) -> dic
 
         if _is_conflict(metadata_activo, fields.get("activo")):
             warnings.append("Conflicto activo imagen vs metadata: se prioriza metadata.")
-        if _is_conflict(metadata_seccion, fields.get("seccion")):
-            warnings.append("Conflicto seccion imagen vs metadata: se prioriza metadata.")
+        if _is_conflict(final_seccion, fields.get("seccion")):
+            warnings.append("Conflicto seccion imagen vs metadata/url: se prioriza sección normalizada.")
         if _is_conflict(metadata_plan_url, image_plan_url):
             warnings.append("plan_url difiere entre imagen y metadata: se conserva ambas referencias.")
         if metadata_target_url and image_plan_url and metadata_target_url != image_plan_url:
             warnings.append("target_url (ejecución) difiere de plan_url (referencia).")
+        if use_url_derived_seccion:
+            warnings.append("seccion normalizada desde URL: se usa el segmento raíz del path.")
 
         normalized_interactions.append(
             {
                 "tipo_evento": _normalize_text_value(fields.get("tipo_evento")),
                 "activo": metadata_activo,
-                "seccion": metadata_seccion,
+                "seccion": final_seccion,
                 "flujo": _normalize_text_value(fields.get("flujo")),
                 "elemento": _normalize_text_value(fields.get("elemento")),
                 "ubicacion": _normalize_text_value(fields.get("ubicacion")),
@@ -144,7 +178,7 @@ def normalize_case(metadata: dict[str, Any], parsed_plan: dict[str, Any]) -> dic
                 _normalize_metadata_interaction(
                     entry=entry,
                     metadata_activo=metadata_activo,
-                    metadata_seccion=metadata_seccion,
+                    metadata_seccion=final_seccion,
                     metadata_plan_url=metadata_plan_url,
                     metadata_target_url=metadata_target_url,
                     metadata_page_path_regex=metadata_page_path_regex,
@@ -154,7 +188,7 @@ def normalize_case(metadata: dict[str, Any], parsed_plan: dict[str, Any]) -> dic
     return {
         "case_id": metadata.get("case_id"),
         "activo": metadata_activo,
-        "seccion": metadata_seccion,
+        "seccion": final_seccion,
         "plan_url": metadata_plan_url,
         "target_url": metadata_target_url,
         "page_path_regex": metadata_page_path_regex,
