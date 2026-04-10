@@ -17,6 +17,41 @@ from src.selectors.build_selectors import propose_selectors
 from src.selectors.validate_selectors import validate_selector_candidates
 
 
+
+
+def inspect_case_input_structure(repo_root: Path, case_id: str) -> dict[str, Any]:
+    """Validate required input structure for a case before running the pipeline."""
+    case_dir = repo_root / "inputs" / case_id
+    images_dir = case_dir / "images"
+    metadata_path = case_dir / "metadata.json"
+
+    missing: list[str] = []
+    if not case_dir.exists():
+        missing.append(f"No existe directorio del caso: {case_dir}")
+    if not metadata_path.exists():
+        missing.append(f"Falta metadata: {metadata_path}")
+    if not images_dir.exists():
+        missing.append(f"Falta carpeta de imágenes: {images_dir}")
+
+    images: list[Path] = []
+    if images_dir.exists():
+        images = sorted(
+            p
+            for p in images_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+        )
+        if not images:
+            missing.append(f"No se encontraron imágenes en: {images_dir}")
+
+    return {
+        "case_id": case_id,
+        "case_dir": str(case_dir),
+        "metadata_path": str(metadata_path),
+        "images_dir": str(images_dir),
+        "image_count": len(images),
+        "is_sufficient": not missing,
+        "missing": missing,
+    }
 def load_metadata(case_dir: Path) -> dict[str, Any]:
     metadata_path = case_dir / "metadata.json"
     with metadata_path.open("r", encoding="utf-8") as f:
@@ -175,6 +210,13 @@ def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
     case_dir = repo_root / "inputs" / case_id
     images_dir = case_dir / "images"
 
+    input_check = inspect_case_input_structure(repo_root=repo_root, case_id=case_id)
+    if not input_check.get("is_sufficient"):
+        details = "\n".join(f"- {item}" for item in input_check.get("missing", []))
+        raise FileNotFoundError(
+            f"Estructura de entrada incompleta para {case_id}.\n{details}"
+        )
+
     metadata = load_metadata(case_dir)
     output_dir = ensure_output_dir(repo_root, case_id)
 
@@ -248,6 +290,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=".",
         help="Repository root containing inputs/ and outputs/",
     )
+    parser.add_argument(
+        "--inspect-only",
+        action="store_true",
+        help="Only validate case input structure without running the full pipeline.",
+    )
     return parser
 
 
@@ -255,7 +302,10 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    result = run_case(repo_root=Path(args.repo_root), case_id=args.case_id)
+    if args.inspect_only:
+        result = inspect_case_input_structure(repo_root=Path(args.repo_root), case_id=args.case_id)
+    else:
+        result = run_case(repo_root=Path(args.repo_root), case_id=args.case_id)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
