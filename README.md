@@ -77,6 +77,14 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+### En caso de que no funcione el requirements.txt
+```bash
+python -m pip install rapidocr-onnxruntime==1.2.3 onnxruntime==1.24.4 opencv-python==4.13.0.92 beautifulsoup4==4.12.3 lxml==5.2.2
+```
+### Luego validar asi
+```bash
+python -c "import rapidocr_onnxruntime, onnxruntime, cv2; print('OCR OK'); print(cv2.__version__)"
+```
 
 ## Cómo ejecutar un caso
 Ejemplo con `case_001`:
