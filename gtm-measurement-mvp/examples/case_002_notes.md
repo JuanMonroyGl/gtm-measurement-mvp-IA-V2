@@ -1,0 +1,1 @@
+la implementación manual omitió la interacción de la imagen 2

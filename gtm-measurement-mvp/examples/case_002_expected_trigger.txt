@@ -1,0 +1,1 @@
+.cardSuperiorDesk .cardBannerDesk, .cardSuperiorDesk .cardBannerDesk *, .nav-tabs-wrapper .tab-item, .nav-tabs-wrapper .tab-item *, .contenedor-boton-general a, .contenedor-boton-general a *, .lista-tasas-condiciones a, .lista-tasas-condiciones a *, .accordion-content .lista-bullets a, .accordion-content .lista-bullets a *, .accordion-group p a, .accordion-group p a *
