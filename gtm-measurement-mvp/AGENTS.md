@@ -80,12 +80,20 @@ Cada interacción debe incluir:
   - scraping/render del DOM
   - construcción de selectores
   - generación de JS
+- Patrón GTM estándar del proyecto: `eventData` + `setDataEvent(...)` + guard `document.location.href.search('appspot.com') == -1` antes de `analytics.track(...)`.
+
+- En GTM, las variables de helper (click text / text close / clean) pueden llegar como función o como valor ya resuelto; el generador debe soportar ambos casos.
 
 ## Reglas de entrada del caso
 - Las imágenes del plan estarán en `inputs/<case_id>/images/`
 - La metadata del caso estará en `inputs/<case_id>/metadata.json`
 - El parser debe construir el caso aunque algunas imágenes no incluyan URL legible
 - Si falta información en las imágenes, completar desde `metadata.json` y reportarlo en `report.md`
+
+## Convención de benchmark manual por caso
+- Para casos con implementación manual previa, usar `examples/case_XXX_expected_tag.js`, `examples/case_XXX_expected_trigger.txt` y `examples/case_XXX_notes.md` como benchmark de comparación.
+- Estos archivos son referencia útil para detectar diferencias, posibles errores o mejoras del sistema.
+- No reemplazan la fuente principal del caso: plan de medición, página real y `measurement_case` generado.
 
 ## Done when
 - Existe `measurement_case.json`
