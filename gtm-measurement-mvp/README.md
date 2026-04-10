@@ -25,3 +25,23 @@ Se crea `outputs/case_001/` con:
 - `report.md` (evidencia textual, warnings y campos incompletos)
 
 > Nota: no incluye scraping complejo del DOM ni generación final de GTM todavía.
+
+
+## Golden case validado
+- `case_001` es el caso de referencia (golden case) validado manualmente en **GTM Preview** para esta fase del MVP.
+- El comportamiento validado incluye:
+  - `measurement_case.json` con interacciones no vacías
+  - `tag_template.js` funcional (no stub)
+  - `trigger_selector.txt` no vacío
+
+## Check mínimo anti-regresión
+Ejecuta después de correr el caso:
+
+```bash
+python checks/check_case_output.py --case-id case_001 --repo-root .
+```
+
+El check falla si:
+- `interacciones` sale vacío
+- `tag_template.js` vuelve a stub
+- `trigger_selector.txt` sale vacío
