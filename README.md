@@ -5,7 +5,10 @@ Este repositorio transforma un caso de medición (imágenes del plan + metadata)
 
 No es un publicador automático en GTM ni una herramienta autoservicio final: es un **MVP funcional de uso interno** que acelera trabajo técnico y mantiene revisión humana obligatoria.
 
+> **Confidencialidad:** este repositorio es privado y de uso interno.
+
 ## Estado actual del MVP
+- ✅ Estructura del repo aplanada en la **raíz** (sin carpeta anidada adicional).
 - ✅ Pipeline ejecutable por caso desde `src/cli/run_case.py`.
 - ✅ OCR operativo cuando el entorno está listo.
 - ✅ Fallback por `image_evidence.json` cuando OCR no está disponible y existe evidencia previa.
@@ -154,7 +157,7 @@ python checks/compare_case_outputs_against_examples.py --case-id case_001 --repo
 - **Selectores ambiguos**: revisar `report.md` y ajustar estrategia de selector en validación humana.
 - **Diferencias contra implementación previa**: comparar con `examples/` y documentar decisión en reporte.
 
-## Qué sigue a futuro
+## Qué sigue a futuro (realista)
 - Mejorar cobertura de casos y diversidad de layouts.
 - Endurecer validaciones automáticas de selectores y confidence.
 - Robustecer extracción OCR para entornos heterogéneos.
