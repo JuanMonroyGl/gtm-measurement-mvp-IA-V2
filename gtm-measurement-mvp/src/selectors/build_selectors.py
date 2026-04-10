@@ -26,7 +26,10 @@ def _css_escape(value: str) -> str:
 def _interaction_kind(interaction: dict[str, Any]) -> str:
     elemento = _normalize(interaction.get("elemento"))
     tipo_evento = _normalize(interaction.get("tipo_evento"))
+    ubicacion = _normalize(interaction.get("ubicacion"))
 
+    if "menu" in elemento or "clic menu" in tipo_evento or "menu" in ubicacion:
+        return "menu"
     if "link" in elemento or "clic link" in tipo_evento:
         return "link"
     if "card" in elemento or "clic card" in tipo_evento:
@@ -44,6 +47,27 @@ def _preferred_selector(interaction: dict[str, Any], soup: BeautifulSoup) -> tup
 
     if kind == "button" and "descarga" in text_ref and soup.select('a[href*="apps.apple.com"]'):
         return 'a[href*="apps.apple.com"]', "href estable de App Store"
+
+    if kind == "link" and "compra de cartera" in ubicacion and soup.select('.cardSuperiorDesk .cardBannerDesk'):
+        return ".cardSuperiorDesk .cardBannerDesk", "bloque superior de compra de cartera detectado"
+
+    if kind == "menu" and "menu principal" in ubicacion and soup.select('header.wpthemeControlHeader a[aria-label="Display content menu"]'):
+        return 'header.wpthemeControlHeader a[aria-label="Display content menu"]', "control de menú principal detectado"
+
+    if kind == "card" and "tasas" in ubicacion and soup.select(".nav-tabs-wrapper .tab-item"):
+        return ".nav-tabs-wrapper .tab-item", "tabs de tasas detectados"
+
+    if kind == "button" and "tasas" in ubicacion and soup.select(".contenedor-boton-general a"):
+        return ".contenedor-boton-general a", "botón principal de tasas detectado"
+
+    if kind == "link" and "tasas" in ubicacion and soup.select(".lista-tasas-condiciones a"):
+        return ".lista-tasas-condiciones a", "lista de tasas/condiciones detectada"
+
+    if kind == "link" and "documentos" in ubicacion and soup.select(".accordion-content .lista-bullets a"):
+        return ".accordion-content .lista-bullets a", "links de documentos detectados"
+
+    if kind == "link" and "seguros" in ubicacion and soup.select(".accordion-group p a"):
+        return ".accordion-group p a", "links de seguros detectados"
 
     if kind == "button" and "inscribir" in ubicacion and soup.select('.contenedor-buttons-tabs .swiper .swiper-wrapper .swiper-slide'):
         return '.contenedor-buttons-tabs .swiper .swiper-wrapper .swiper-slide', "grupo de tabs de inscripción detectado"
