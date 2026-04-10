@@ -9,15 +9,19 @@ Phase 2 goal:
 from __future__ import annotations
 
 import json
+import importlib.util
 import re
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
 try:
     from rapidocr_onnxruntime import RapidOCR
-except ImportError:  # optional dependency at runtime
+    RAPIDOCR_IMPORT_ERROR: str | None = None
+except Exception as exc:  # optional dependency at runtime
     RapidOCR = None  # type: ignore[assignment]
+    RAPIDOCR_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
 
 
 EVENT_TYPES = {"clic boton", "clic card", "clic link", "clic tap"}
@@ -33,6 +37,59 @@ class ImageEvidence:
     extraction_method: str
     confidence: float | None
     plan_url_candidates: list[str]
+
+
+def _detect_opencv_conflict() -> str | None:
+    """Detect common cv2 conflict: opencv-python shadows headless build."""
+    try:
+        opencv_gui = version("opencv-python")
+    except PackageNotFoundError:
+        opencv_gui = None
+    try:
+        opencv_headless = version("opencv-python-headless")
+    except PackageNotFoundError:
+        opencv_headless = None
+
+    if opencv_gui and opencv_headless:
+        return (
+            "Se detectó opencv-python y opencv-python-headless instalados al tiempo; "
+            "puede causar conflicto de importación de cv2."
+        )
+    return None
+
+
+def get_ocr_runtime_status() -> dict[str, Any]:
+    """Return OCR runtime availability with actionable diagnostics."""
+    has_package = importlib.util.find_spec("rapidocr_onnxruntime") is not None
+    status: dict[str, Any] = {
+        "ocr_available": False,
+        "has_rapidocr_package": has_package,
+        "import_error": RAPIDOCR_IMPORT_ERROR,
+        "init_error": None,
+        "opencv_conflict_warning": _detect_opencv_conflict(),
+    }
+
+    if not has_package:
+        status["hint"] = "Instala dependencias: pip install -r requirements.txt"
+        return status
+
+    if RapidOCR is None:
+        status["hint"] = "rapidocr_onnxruntime está instalado pero no se pudo importar."
+        return status
+
+    try:
+        RapidOCR()
+    except Exception as exc:
+        status["init_error"] = f"{type(exc).__name__}: {exc}"
+        status["hint"] = (
+            "No se pudo inicializar OCR. Si aparece libGL.so.1 faltante, instala "
+            "libgl1 en el sistema o elimina opencv-python y deja solo opencv-python-headless."
+        )
+        return status
+
+    status["ocr_available"] = True
+    status["hint"] = "OCR listo."
+    return status
 
 
 def discover_case_images(case_images_dir: Path) -> list[Path]:
@@ -188,7 +245,26 @@ def extract_support_text_from_images(case_images_dir: Path) -> list[ImageEvidenc
             )
         return evidences
 
-    ocr = RapidOCR()
+    try:
+        ocr = RapidOCR()
+    except Exception:
+        sidecar_evidences = _load_sidecar_evidence(case_images_dir)
+        if sidecar_evidences:
+            return sidecar_evidences
+
+        for image_path in images:
+            evidences.append(
+                ImageEvidence(
+                    image_path=str(image_path),
+                    extracted_lines=[],
+                    extracted_text=None,
+                    extraction_method="ocr_init_failed",
+                    confidence=0.0,
+                    plan_url_candidates=[],
+                )
+            )
+        return evidences
+
     for image_path in images:
         lines = _extract_lines_with_ocr(image_path, ocr)
         full_text = "\n".join(lines) if lines else None
@@ -228,10 +304,18 @@ def parse_measurement_plan(case_images_dir: Path) -> dict[str, Any]:
             )
         )
 
+    ocr_status = get_ocr_runtime_status()
+    if not ocr_status.get("ocr_available"):
+        reason = ocr_status.get("import_error") or ocr_status.get("init_error") or "OCR no disponible."
+        warnings.append(f"OCR no disponible: {reason}")
+        if ocr_status.get("opencv_conflict_warning"):
+            warnings.append(str(ocr_status["opencv_conflict_warning"]))
+
     return {
         "parser_status": "ok" if interactions_raw else "partial",
         "image_count": len(evidences),
         "evidence": [e.__dict__ for e in evidences],
         "interactions_raw": interactions_raw,
+        "ocr_status": ocr_status,
         "warnings": warnings,
     }

@@ -9,7 +9,7 @@ from typing import Any
 
 from src.generator.generate_gtm_tag import build_tag_template
 from src.generator.generate_trigger import build_consolidated_trigger_selector
-from src.plan_parser.extract_plan_from_images import parse_measurement_plan
+from src.plan_parser.extract_plan_from_images import get_ocr_runtime_status, parse_measurement_plan
 from src.plan_parser.normalize_plan import normalize_case
 from src.scraper.fetch_page import fetch_html
 from src.scraper.snapshot_dom import build_dom_snapshot
@@ -24,6 +24,8 @@ def inspect_case_input_structure(repo_root: Path, case_id: str) -> dict[str, Any
     case_dir = repo_root / "inputs" / case_id
     images_dir = case_dir / "images"
     metadata_path = case_dir / "metadata.json"
+    sidecar_path = case_dir / "image_evidence.json"
+    ocr_status = get_ocr_runtime_status()
 
     missing: list[str] = []
     if not case_dir.exists():
@@ -48,9 +50,13 @@ def inspect_case_input_structure(repo_root: Path, case_id: str) -> dict[str, Any
         "case_dir": str(case_dir),
         "metadata_path": str(metadata_path),
         "images_dir": str(images_dir),
+        "sidecar_path": str(sidecar_path),
         "image_count": len(images),
         "is_sufficient": not missing,
         "missing": missing,
+        "ocr_available": bool(ocr_status.get("ocr_available")),
+        "ocr_diagnostic": ocr_status,
+        "fallback_available": sidecar_path.exists(),
     }
 def load_metadata(case_dir: Path) -> dict[str, Any]:
     metadata_path = case_dir / "metadata.json"
@@ -111,6 +117,8 @@ def _render_report(
         "",
         "## Evidencia por imagen",
     ]
+    ocr_status = parsed_plan.get("ocr_status") or {}
+    lines.insert(7, f"- OCR disponible: {ocr_status.get('ocr_available')}")
 
     for evidence in parsed_plan.get("evidence", []):
         lines.append(f"- image: {evidence.get('image_path')}")
@@ -215,6 +223,15 @@ def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
         details = "\n".join(f"- {item}" for item in input_check.get("missing", []))
         raise FileNotFoundError(
             f"Estructura de entrada incompleta para {case_id}.\n{details}"
+        )
+    if not input_check.get("ocr_available") and not input_check.get("fallback_available"):
+        ocr_diag = input_check.get("ocr_diagnostic") or {}
+        reason = ocr_diag.get("import_error") or ocr_diag.get("init_error") or "No diagnostic details."
+        hint = ocr_diag.get("hint") or "Instala OCR o agrega image_evidence.json como respaldo."
+        raise RuntimeError(
+            "No se puede procesar el caso: OCR no disponible y no existe image_evidence.json.\n"
+            f"OCR diagnostic: {reason}\n"
+            f"Sugerencia: {hint}"
         )
 
     metadata = load_metadata(case_dir)
