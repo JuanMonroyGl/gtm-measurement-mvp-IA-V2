@@ -71,6 +71,25 @@ def check_case_outputs(repo_root: Path, case_id: str) -> None:
         "metrics match_count buckets are inconsistent",
     )
 
+    selector_payloads: dict[str, set[tuple[str, str, str]]] = {}
+    for interaction in interactions:
+        selector = interaction.get("selector_candidato")
+        if not selector:
+            continue
+        selector_payloads.setdefault(selector, set()).add(
+            (
+                str(interaction.get("tipo_evento") or ""),
+                str(interaction.get("flujo") or ""),
+                str(interaction.get("ubicacion") or ""),
+            )
+        )
+    conflicts = {selector: payloads for selector, payloads in selector_payloads.items() if len(payloads) > 1}
+    _assert(
+        not conflicts,
+        "duplicate selector_candidato with conflicting payloads detected: "
+        + "; ".join(f"{selector} -> {sorted(payloads)}" for selector, payloads in conflicts.items()),
+    )
+
     tag_template = tag_template_path.read_text(encoding="utf-8")
     _assert(tag_template.strip() != "", "tag_template.js is empty")
     for marker in STUB_MARKERS:

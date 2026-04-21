@@ -9,6 +9,44 @@ def _escape_js(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _build_selector_rules(measurement_case: dict[str, Any]) -> list[tuple[str, str, str, str]]:
+    rules: list[tuple[str, str, str, str]] = []
+    for interaction in measurement_case.get("interacciones", []):
+        selector = interaction.get("selector_candidato") or interaction.get("selector_activador")
+        if not selector:
+            continue
+        rules.append(
+            (
+                str(selector),
+                str(interaction.get("tipo_evento") or "Clic Boton"),
+                str(interaction.get("flujo") or ""),
+                str(interaction.get("ubicacion") or ""),
+            )
+        )
+    return rules
+
+
+def _assert_no_conflicting_duplicate_selectors(selector_rules: list[tuple[str, str, str, str]]) -> None:
+    grouped: dict[str, set[tuple[str, str, str]]] = {}
+    for selector, event_name, flujo, ubicacion in selector_rules:
+        grouped.setdefault(selector, set()).add((event_name, flujo, ubicacion))
+
+    conflicts = {selector: payloads for selector, payloads in grouped.items() if len(payloads) > 1}
+    if not conflicts:
+        return
+
+    details = []
+    for selector, payloads in conflicts.items():
+        payload_list = ", ".join(f"{event}/{flujo}/{ubicacion}" for event, flujo, ubicacion in sorted(payloads))
+        details.append(f"{selector} -> [{payload_list}]")
+    detail_text = "; ".join(details)
+    raise ValueError(
+        "Conflicto de selectores en generación de tag: múltiples interacciones comparten el mismo selector "
+        "con payload distinto, lo que produciría ramas muertas en if/else if. "
+        f"Detalles: {detail_text}"
+    )
+
+
 def build_tag_template(measurement_case: dict[str, Any]) -> str:
     activo = _escape_js(str(measurement_case.get("activo") or "bancolombia"))
     seccion = _escape_js(str(measurement_case.get("seccion") or "pagos"))
@@ -31,20 +69,8 @@ def build_tag_template(measurement_case: dict[str, Any]) -> str:
         "    value = (typeof clean === 'function') ? clean(value || '') : (value || '');",
     ]
 
-    interactions = measurement_case.get("interacciones", [])
-    selector_rules: list[tuple[str, str, str, str]] = []
-    for interaction in interactions:
-        selector = interaction.get("selector_candidato") or interaction.get("selector_activador")
-        if not selector:
-            continue
-        selector_rules.append(
-            (
-                str(selector),
-                str(interaction.get("tipo_evento") or "Clic Boton"),
-                str(interaction.get("flujo") or ""),
-                str(interaction.get("ubicacion") or ""),
-            )
-        )
+    selector_rules = _build_selector_rules(measurement_case)
+    _assert_no_conflicting_duplicate_selectors(selector_rules)
 
     for idx, (selector, event_name, flujo, ubicacion) in enumerate(selector_rules):
         prefix = "if" if idx == 0 else "else if"

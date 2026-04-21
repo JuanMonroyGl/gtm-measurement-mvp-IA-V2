@@ -253,6 +253,7 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
 
     soup = BeautifulSoup(html, "lxml")
     selector_evidence: list[dict[str, Any]] = []
+    used_selectors: set[str] = set()
 
     for index, interaction in enumerate(measurement_case.get("interacciones", []), start=1):
         interaction.setdefault("warnings", [])
@@ -285,8 +286,22 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
             )
             continue
 
+        if selector in used_selectors:
+            alternative = next(
+                (candidate for candidate in ranked_candidates if candidate.get("selector") and candidate.get("selector") not in used_selectors),
+                None,
+            )
+            if alternative and alternative.get("selector"):
+                selector = str(alternative["selector"])
+                evidence = (
+                    "selector alternativo elegido para evitar condición runtime duplicada "
+                    f"(kind={kind}, score={alternative.get('ranking_score')}, "
+                    f"primary_stability={(alternative.get('stability') or {}).get('primary')})"
+                )
+
         interaction["selector_candidato"] = selector
         interaction["selector_activador"] = f"{selector}, {selector} *"
+        used_selectors.add(selector)
 
         previous_confidence = interaction.get("confidence")
         base_conf = 0.8 if "fallback" not in (evidence or "") else 0.65

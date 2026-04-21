@@ -20,8 +20,9 @@ def validate_selector_candidates(measurement_case: dict[str, Any], dom_snapshot:
     soup = BeautifulSoup(html, "lxml")
     validated = 0
     warnings: list[str] = []
+    selector_to_indices: dict[str, list[int]] = {}
 
-    for interaction in measurement_case.get("interacciones", []):
+    for idx, interaction in enumerate(measurement_case.get("interacciones", []), start=1):
         selector = interaction.get("selector_candidato")
         interaction.setdefault("warnings", [])
         interaction["warnings"] = [
@@ -42,6 +43,7 @@ def validate_selector_candidates(measurement_case: dict[str, Any], dom_snapshot:
             match_count = len(matches)
             interaction["match_count"] = match_count
             validated += 1
+            selector_to_indices.setdefault(selector, []).append(idx)
 
             if match_count == 0:
                 interaction["warnings"].append("selector_candidato no encontró elementos en el DOM.")
@@ -54,6 +56,17 @@ def validate_selector_candidates(measurement_case: dict[str, Any], dom_snapshot:
             interaction["match_count"] = None
             interaction["warnings"].append(f"Error al validar selector: {exc}")
             warnings.append(f"Selector inválido detectado: {selector}")
+
+    for selector, indices in selector_to_indices.items():
+        if len(indices) <= 1:
+            continue
+        warning_text = (
+            f"selector_candidato compartido '{selector}' en interacciones {indices}; "
+            "riesgo de ramas muertas en if/else if del tag si no hay discriminador adicional."
+        )
+        warnings.append(warning_text)
+        for idx in indices:
+            measurement_case["interacciones"][idx - 1]["warnings"].append(warning_text)
 
     return {
         "status": "ok",
