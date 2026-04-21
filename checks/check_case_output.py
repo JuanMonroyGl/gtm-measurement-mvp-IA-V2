@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
-
 
 STUB_MARKERS = [
     "Stub GTM tag template",
@@ -20,6 +20,10 @@ def _assert(condition: bool, message: str) -> None:
 
 
 def check_case_outputs(repo_root: Path, case_id: str) -> None:
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from src.validation.schema_validation import validate_measurement_case_schema
+
     output_dir = repo_root / "outputs" / case_id
     measurement_case_path = output_dir / "measurement_case.json"
     tag_template_path = output_dir / "tag_template.js"
@@ -30,6 +34,12 @@ def check_case_outputs(repo_root: Path, case_id: str) -> None:
     _assert(trigger_selector_path.exists(), f"Missing file: {trigger_selector_path}")
 
     measurement_case = json.loads(measurement_case_path.read_text(encoding="utf-8"))
+    schema_validation = validate_measurement_case_schema(repo_root=repo_root, measurement_case=measurement_case)
+    _assert(
+        schema_validation.valid,
+        "measurement_case.json no cumple schema: " + "; ".join(schema_validation.errors),
+    )
+
     interactions = measurement_case.get("interacciones", [])
     _assert(isinstance(interactions, list), "interacciones must be a list")
     _assert(len(interactions) > 0, "measurement_case.json has empty interacciones")

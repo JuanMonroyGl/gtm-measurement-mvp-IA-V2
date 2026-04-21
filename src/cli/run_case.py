@@ -15,6 +15,7 @@ from src.scraper.fetch_page import fetch_html
 from src.scraper.snapshot_dom import build_dom_snapshot
 from src.selectors.build_selectors import propose_selectors
 from src.selectors.validate_selectors import validate_selector_candidates
+from src.validation.schema_validation import SchemaValidationResult, validate_measurement_case_schema
 
 
 
@@ -98,6 +99,7 @@ def _render_report(
     dom_warning: str | None,
     selector_build_result: dict[str, Any],
     selector_validation: dict[str, Any],
+    schema_validation: SchemaValidationResult,
 ) -> str:
     lines = [
         f"# Reporte {case_id}",
@@ -181,6 +183,17 @@ def _render_report(
 
     lines.extend([
         "",
+        "## Validación de schema",
+        f"- schema_path: {schema_validation.schema_path}",
+        f"- valid: {schema_validation.valid}",
+    ])
+    if schema_validation.errors:
+        lines.append("- errors:")
+        for error in schema_validation.errors:
+            lines.append(f"  - {error}")
+
+    lines.extend([
+        "",
         "## Scraping/DOM",
         f"- fetch_warning: {fetch_warning}",
         f"- dom_warning: {dom_warning}",
@@ -255,6 +268,14 @@ def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
         measurement_case=measurement_case,
         dom_snapshot=dom_snapshot.__dict__,
     )
+    schema_validation = validate_measurement_case_schema(repo_root=repo_root, measurement_case=measurement_case)
+    if not schema_validation.valid:
+        details = "\n".join(f"- {err}" for err in schema_validation.errors)
+        raise RuntimeError(
+            "measurement_case.json no cumple el schema del proyecto.\n"
+            f"Schema: {schema_validation.schema_path}\n"
+            f"{details}"
+        )
 
     tag_template = build_tag_template(measurement_case)
     trigger_selector = build_consolidated_trigger_selector(measurement_case)
@@ -278,6 +299,7 @@ def run_case(repo_root: Path, case_id: str) -> dict[str, Any]:
         dom_warning=dom_snapshot.warning,
         selector_build_result=selector_build_result,
         selector_validation=selector_validation,
+        schema_validation=schema_validation,
     )
     report_path.write_text(report_text, encoding="utf-8")
 
