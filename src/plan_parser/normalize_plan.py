@@ -33,9 +33,11 @@ def _is_conflict(meta_value: str | None, image_value: str | None) -> bool:
 
 
 def _pick_plan_url(image_candidates: list[str], metadata_plan_url: str | None) -> str | None:
+    if metadata_plan_url:
+        return metadata_plan_url
     if image_candidates:
         return image_candidates[0]
-    return metadata_plan_url
+    return None
 
 
 def _normalize_text_value(value: str | None) -> str | None:
@@ -122,34 +124,35 @@ def normalize_case(metadata: dict[str, Any], parsed_plan: dict[str, Any]) -> dic
         target_url=metadata_target_url,
         plan_url=metadata_plan_url,
     )
-    final_seccion = metadata_seccion
-    use_url_derived_seccion = False
-    if derived_seccion and metadata_seccion:
-        if derived_seccion.strip().lower() != str(metadata_seccion).strip().lower():
-            use_url_derived_seccion = True
-            final_seccion = derived_seccion
-    elif derived_seccion and not metadata_seccion:
-        use_url_derived_seccion = True
-        final_seccion = derived_seccion
+    final_seccion = metadata_seccion or derived_seccion
+    derived_section_used = bool(derived_seccion and not metadata_seccion)
+    section_conflict_detected = bool(
+        metadata_seccion
+        and derived_seccion
+        and derived_seccion.strip().lower() != str(metadata_seccion).strip().lower()
+    )
 
     for raw in parsed_plan.get("interactions_raw", []):
         fields = raw.get("fields", {})
-        image_plan_url = _pick_plan_url(
+        selected_plan_url = _pick_plan_url(
             raw.get("plan_url_candidates", []),
             metadata_plan_url,
         )
+        image_plan_url = (raw.get("plan_url_candidates") or [None])[0]
 
         warnings = list(raw.get("warnings", []))
 
         if _is_conflict(metadata_activo, fields.get("activo")):
             warnings.append("Conflicto activo imagen vs metadata: se prioriza metadata.")
         if _is_conflict(final_seccion, fields.get("seccion")):
-            warnings.append("Conflicto seccion imagen vs metadata/url: se prioriza sección normalizada.")
+            warnings.append("Conflicto seccion imagen vs metadata/url: se prioriza metadata cuando existe.")
         if _is_conflict(metadata_plan_url, image_plan_url):
             warnings.append("plan_url difiere entre imagen y metadata: se conserva ambas referencias.")
         if metadata_target_url and image_plan_url and metadata_target_url != image_plan_url:
             warnings.append("target_url (ejecución) difiere de plan_url (referencia).")
-        if use_url_derived_seccion:
+        if section_conflict_detected:
+            warnings.append("Conflicto metadata.seccion vs sección derivada de URL: se prioriza metadata.")
+        if derived_section_used:
             warnings.append("seccion normalizada desde URL: se usa el segmento raíz del path.")
 
         normalized_interactions.append(
@@ -160,7 +163,7 @@ def normalize_case(metadata: dict[str, Any], parsed_plan: dict[str, Any]) -> dic
                 "flujo": _normalize_text_value(fields.get("flujo")),
                 "elemento": _normalize_text_value(fields.get("elemento")),
                 "ubicacion": _normalize_text_value(fields.get("ubicacion")),
-                "plan_url": image_plan_url,
+                "plan_url": selected_plan_url,
                 "target_url": metadata_target_url,
                 "page_path_regex": metadata_page_path_regex,
                 "texto_referencia": _normalize_text_value(fields.get("texto_referencia")),

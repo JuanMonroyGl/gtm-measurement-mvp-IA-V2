@@ -39,49 +39,98 @@ def _interaction_kind(interaction: dict[str, Any]) -> str:
     return "button"
 
 
+def _candidate_elements(kind: str, soup: BeautifulSoup) -> list[Tag]:
+    if kind == "link":
+        return list(soup.select("a[href]"))
+    if kind == "tap":
+        return list(soup.select("button, summary, [role='button'], [aria-expanded]"))
+    if kind == "card":
+        return list(soup.select("[class*='card'], article, section, [role='button']"))
+    if kind == "menu":
+        return list(soup.select("nav a, header a, button, [role='button']"))
+    return list(soup.select("button, a[href], [role='button']"))
+
+
+def _tokenize(value: str | None) -> list[str]:
+    normalized = _normalize(value)
+    if not normalized:
+        return []
+    stopwords = {
+        "de",
+        "la",
+        "el",
+        "los",
+        "las",
+        "y",
+        "en",
+        "del",
+        "para",
+        "con",
+        "por",
+        "un",
+        "una",
+        "al",
+    }
+    return [
+        token
+        for token in re.split(r"[^a-z0-9]+", normalized)
+        if len(token) >= 3 and token not in stopwords
+    ]
+
+
+def _element_text_for_matching(element: Tag) -> str:
+    parts: list[str] = []
+    parts.append(" ".join(element.get_text(" ", strip=True).split()))
+    for attr in ("aria-label", "title", "alt", "name"):
+        value = element.get(attr)
+        if isinstance(value, str) and value.strip():
+            parts.append(value)
+    for attr, value in element.attrs.items():
+        if not str(attr).startswith("data-"):
+            continue
+        if isinstance(value, str) and value.strip():
+            parts.append(value)
+    return _normalize(" ".join(parts))
+
+
+def _best_matching_element(
+    interaction: dict[str, Any], candidates: list[Tag]
+) -> tuple[Tag | None, int]:
+    tokens = []
+    for field in ("texto_referencia", "elemento", "ubicacion", "flujo"):
+        tokens.extend(_tokenize(interaction.get(field)))
+    if not tokens:
+        return (candidates[0], 0) if candidates else (None, 0)
+
+    best: Tag | None = None
+    best_score = 0
+    for el in candidates:
+        haystack = _element_text_for_matching(el)
+        if not haystack:
+            continue
+        score = sum(1 for token in tokens if token in haystack)
+        if score > best_score:
+            best = el
+            best_score = score
+    return best, best_score
+
+
 def _preferred_selector(interaction: dict[str, Any], soup: BeautifulSoup) -> tuple[str | None, str | None]:
-    """Domain-aware but non-hardcoded selector candidates for known interaction shapes."""
+    """Prefer stable selectors from best candidate using neutral text/attribute matching."""
     kind = _interaction_kind(interaction)
-    text_ref = _normalize(interaction.get("texto_referencia"))
-    ubicacion = _normalize(interaction.get("ubicacion"))
-
-    if kind == "button" and "descarga" in text_ref and soup.select('a[href*="apps.apple.com"]'):
-        return 'a[href*="apps.apple.com"]', "href estable de App Store"
-
-    if kind == "link" and "compra de cartera" in ubicacion and soup.select('.cardSuperiorDesk .cardBannerDesk'):
-        return ".cardSuperiorDesk .cardBannerDesk", "bloque superior de compra de cartera detectado"
-
-    if kind == "menu" and "menu principal" in ubicacion and soup.select('header.wpthemeControlHeader a[aria-label="Display content menu"]'):
-        return 'header.wpthemeControlHeader a[aria-label="Display content menu"]', "control de menú principal detectado"
-
-    if kind == "card" and "tasas" in ubicacion and soup.select(".nav-tabs-wrapper .tab-item"):
-        return ".nav-tabs-wrapper .tab-item", "tabs de tasas detectados"
-
-    if kind == "button" and "tasas" in ubicacion and soup.select(".contenedor-boton-general a"):
-        return ".contenedor-boton-general a", "botón principal de tasas detectado"
-
-    if kind == "link" and "tasas" in ubicacion and soup.select(".lista-tasas-condiciones a"):
-        return ".lista-tasas-condiciones a", "lista de tasas/condiciones detectada"
-
-    if kind == "link" and "documentos" in ubicacion and soup.select(".accordion-content .lista-bullets a"):
-        return ".accordion-content .lista-bullets a", "links de documentos detectados"
-
-    if kind == "link" and "seguros" in ubicacion and soup.select(".accordion-group p a"):
-        return ".accordion-group p a", "links de seguros detectados"
-
-    if kind == "button" and "inscribir" in ubicacion and soup.select('.contenedor-buttons-tabs .swiper .swiper-wrapper .swiper-slide'):
-        return '.contenedor-buttons-tabs .swiper .swiper-wrapper .swiper-slide', "grupo de tabs de inscripción detectado"
-
-    if kind == "card" and soup.select('.card-razon-beneficio-vivienda .contenido-card-razon-beneficio-vivienda'):
-        return '.card-razon-beneficio-vivienda .contenido-card-razon-beneficio-vivienda', "grupo de cards de beneficios detectado"
-
-    if kind == "tap" and soup.select('.contenido-preguntas-frecuentes .acordeon-pregunta-frecuente'):
-        return '.contenido-preguntas-frecuentes .acordeon-pregunta-frecuente', "grupo de preguntas frecuentes detectado"
-
-    if kind == "link" and soup.select('a[href*=".pdf"]'):
-        return 'a[href*=".pdf"]', "link PDF estable detectado"
-
-    return None, None
+    candidates = _candidate_elements(kind, soup)
+    best, score = _best_matching_element(interaction, candidates)
+    if not best:
+        return None, None
+    selector = _selector_from_element(best)
+    if not selector:
+        return None, None
+    evidence = (
+        f"selector por atributos estables y coincidencia textual (kind={kind}, score={score})"
+        if score > 0
+        else f"selector por atributo estable sin coincidencia textual fuerte (kind={kind})"
+    )
+    return selector, evidence
 
 
 def _selector_from_element(element: Tag) -> str | None:
@@ -109,16 +158,7 @@ def _selector_from_element(element: Tag) -> str | None:
 
 def _fallback_selector(interaction: dict[str, Any], soup: BeautifulSoup) -> tuple[str | None, str | None]:
     kind = _interaction_kind(interaction)
-    candidates: list[Tag]
-
-    if kind == "link":
-        candidates = list(soup.select("a[href]"))
-    elif kind == "tap":
-        candidates = list(soup.select("button, summary, [role='button']"))
-    elif kind == "card":
-        candidates = list(soup.select("[class*='card'], article, [role='button']"))
-    else:
-        candidates = list(soup.select("button, a[href], [role='button']"))
+    candidates = _candidate_elements(kind, soup)
 
     text_ref = _normalize(interaction.get("texto_referencia"))
     best: Tag | None = None
