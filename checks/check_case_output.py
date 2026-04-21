@@ -33,6 +33,25 @@ def check_case_outputs(repo_root: Path, case_id: str) -> None:
     interactions = measurement_case.get("interacciones", [])
     _assert(isinstance(interactions, list), "interacciones must be a list")
     _assert(len(interactions) > 0, "measurement_case.json has empty interacciones")
+    for idx, interaction in enumerate(interactions, start=1):
+        warnings = interaction.get("warnings")
+        _assert(isinstance(warnings, list), f"interaction[{idx}] warnings must be a list")
+
+        confidence = interaction.get("confidence")
+        if confidence is not None:
+            _assert(
+                isinstance(confidence, (int, float)) and 0 <= float(confidence) <= 1,
+                f"interaction[{idx}] confidence must be between 0 and 1",
+            )
+
+        selector_candidato = interaction.get("selector_candidato")
+        selector_activador = interaction.get("selector_activador")
+        if selector_candidato:
+            expected = f"{selector_candidato}, {selector_candidato} *"
+            _assert(
+                selector_activador == expected,
+                f"interaction[{idx}] selector_activador should match consolidated pattern",
+            )
 
     tag_template = tag_template_path.read_text(encoding="utf-8")
     _assert(tag_template.strip() != "", "tag_template.js is empty")
