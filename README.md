@@ -9,7 +9,7 @@ No es un publicador automático en GTM ni una herramienta autoservicio final: es
 
 ## Estado actual del MVP
 - ✅ Estructura del repo aplanada en la **raíz** (sin carpeta anidada adicional).
-- ✅ Pipeline ejecutable por caso desde `src/cli/run_case.py`.
+- ✅ Pipeline ejecutable por caso desde `main.py` (con wrapper temporal en `src/cli/run_case.py`).
 - ✅ OCR operativo cuando el entorno está listo.
 - ✅ Fallback por `image_evidence.json` cuando OCR no está disponible y existe evidencia previa.
 - ✅ Generación de artefactos clave (`measurement_case.json`, selectores, trigger, tag y reporte).
@@ -53,21 +53,23 @@ Para un `case_id` en `inputs/`:
 ## Estructura del repositorio
 ```text
 .
+├── main.py
 ├── README.md
 ├── requirements.txt
-├── src/
-│   ├── cli/run_case.py
-│   ├── plan_parser/
-│   ├── scraper/
-│   ├── selectors/
-│   └── generator/
 ├── inputs/
-│   ├── case_001/
-│   └── case_002/
 ├── outputs/                  # se crea/actualiza al ejecutar casos
-├── checks/
+├── plan_reader/
+├── web_scraping/
+├── processing/
+│   ├── selectors/
+│   └── validation/
+├── output_generation/
+├── templates/
 ├── examples/
-└── schemas/
+├── ai/
+├── checks/
+├── schemas/
+└── src/cli/run_case.py       # wrapper temporal de compatibilidad
 ```
 
 ## Requisitos
@@ -93,18 +95,23 @@ python -c "import rapidocr_onnxruntime, onnxruntime, cv2; print('OCR OK'); print
 ## Cómo ejecutar un caso
 Ejemplo con `case_001`:
 ```bash
+python main.py --case-id case_001 --repo-root .
+```
+
+Compatibilidad temporal (legacy):
+```bash
 python -m src.cli.run_case --case-id case_001 --repo-root .
 ```
 
 El mismo flujo aplica para otros casos reales, por ejemplo `case_002`:
 ```bash
-python -m src.cli.run_case --case-id case_002 --repo-root .
+python main.py --case-id case_002 --repo-root .
 ```
 
 ## Preflight OCR
 Antes de correr el pipeline completo, puedes validar entorno y fallback:
 ```bash
-python -m src.cli.run_case --case-id case_001 --repo-root . --inspect-only
+python main.py --case-id case_001 --repo-root . --inspect-only
 ```
 
 Este comando reporta, entre otros:
