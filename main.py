@@ -60,12 +60,150 @@ def _load_metadata_checked(case_dir: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise UserFacingError("metadata.json debe ser un objeto JSON (diccionario).")
 
-    missing_required = [key for key in ("case_id", "target_url") if not payload.get(key)]
-    if missing_required:
-        missing = ", ".join(missing_required)
-        raise UserFacingError(f"Faltan campos obligatorios en metadata.json: {missing}.")
-
     return payload
+
+
+def _normalize_url_candidate(url: str) -> str:
+    cleaned = url.strip().rstrip(".,;:")
+    if cleaned.endswith("/"):
+        return cleaned[:-1]
+    return cleaned
+
+
+def _resolve_unique_target_url(url_candidates: list[str]) -> str:
+    normalized = []
+    for item in url_candidates:
+        if not item:
+            continue
+        candidate = _normalize_url_candidate(str(item))
+        if candidate and candidate not in normalized:
+            normalized.append(candidate)
+
+    if not normalized:
+        raise UserFacingError("No se pudo inferir una target_url única desde las imágenes.")
+    if len(normalized) > 1:
+        raise UserFacingError("Se detectaron múltiples URLs candidatas; no es posible continuar automáticamente.")
+    return normalized[0]
+
+
+def _first_non_empty(values: list[str | None]) -> str | None:
+    for value in values:
+        if value:
+            cleaned = str(value).strip()
+            if cleaned:
+                return cleaned
+    return None
+
+
+def _infer_metadata_from_parsed_plan(
+    *,
+    context: CaseContext,
+    parsed_plan: dict[str, Any],
+    require_unique_target_url: bool,
+) -> dict[str, Any]:
+    interactions_raw = parsed_plan.get("interactions_raw") or []
+    evidence = parsed_plan.get("evidence") or []
+
+    url_candidates: list[str] = []
+    for entry in interactions_raw:
+        for url in entry.get("plan_url_candidates") or []:
+            url_candidates.append(str(url))
+    for item in evidence:
+        for url in item.get("plan_url_candidates") or []:
+            url_candidates.append(str(url))
+
+    if require_unique_target_url:
+        target_url = _resolve_unique_target_url(url_candidates)
+    else:
+        normalized = []
+        for item in url_candidates:
+            candidate = _normalize_url_candidate(str(item))
+            if candidate and candidate not in normalized:
+                normalized.append(candidate)
+        target_url = normalized[0] if normalized else None
+    plan_url = _first_non_empty([target_url, *url_candidates])
+
+    activo = _first_non_empty([
+        (entry.get("fields") or {}).get("activo")
+        for entry in interactions_raw
+        if isinstance(entry, dict)
+    ])
+    seccion = _first_non_empty([
+        (entry.get("fields") or {}).get("seccion")
+        for entry in interactions_raw
+        if isinstance(entry, dict)
+    ])
+
+    return {
+        "case_id": context.case_id,
+        "target_url": target_url,
+        "plan_url": plan_url,
+        "activo": activo,
+        "seccion": seccion,
+    }
+
+
+def resolve_case_input(context: CaseContext) -> dict[str, Any]:
+    """Resolve case metadata combining optional metadata.json with images inference."""
+    case_dir = context.case_dir
+    metadata_path = case_dir / "metadata.json"
+    images_dir = case_dir / "images"
+
+    parsed_plan = parse_measurement_plan(images_dir)
+
+    messages: list[str] = []
+    warnings: list[str] = []
+    metadata_source = "images_inferred"
+    explicit_metadata: dict[str, Any] = {}
+
+    if metadata_path.exists():
+        explicit_metadata = _load_metadata_checked(case_dir)
+        metadata_source = "metadata_override"
+    else:
+        messages.append("No se encontró metadata.json; se usará metadata inferida.")
+
+    inferred_metadata = _infer_metadata_from_parsed_plan(
+        context=context,
+        parsed_plan=parsed_plan,
+        require_unique_target_url=not bool(explicit_metadata.get("target_url")),
+    )
+
+    resolved_target_url = explicit_metadata.get("target_url") or inferred_metadata.get("target_url")
+    if not explicit_metadata.get("target_url"):
+        messages.append("Se detectó target_url automáticamente desde las imágenes.")
+
+    if not resolved_target_url:
+        raise UserFacingError("No se pudo inferir una target_url única desde las imágenes.")
+
+    if explicit_metadata.get("target_url") and inferred_metadata.get("target_url"):
+        if str(explicit_metadata["target_url"]).strip() != str(inferred_metadata["target_url"]).strip():
+            warnings.append("metadata.target_url difiere de URL inferida desde imágenes; se prioriza metadata.")
+
+    resolved_metadata = {
+        "case_id": explicit_metadata.get("case_id") or inferred_metadata.get("case_id") or context.case_id,
+        "target_url": resolved_target_url,
+        "plan_url": explicit_metadata.get("plan_url") or inferred_metadata.get("plan_url"),
+        "activo": explicit_metadata.get("activo") or inferred_metadata.get("activo"),
+        "seccion": explicit_metadata.get("seccion") or inferred_metadata.get("seccion"),
+        "page_path_regex": explicit_metadata.get("page_path_regex"),
+        "notes": explicit_metadata.get("notes"),
+        "interacciones": explicit_metadata.get("interacciones")
+        or explicit_metadata.get("interactions")
+        or explicit_metadata.get("eventos"),
+    }
+
+    if not resolved_metadata.get("case_id"):
+        resolved_metadata["case_id"] = context.case_id
+
+    return {
+        "metadata_source": metadata_source,
+        "messages": messages,
+        "warnings": warnings,
+        "explicit_metadata": explicit_metadata,
+        "inferred_metadata": inferred_metadata,
+        "resolved_metadata": resolved_metadata,
+        "parsed_plan": parsed_plan,
+    }
 
 
 def inspect_case_input_structure(*, context: CaseContext) -> dict[str, Any]:
@@ -77,8 +215,6 @@ def inspect_case_input_structure(*, context: CaseContext) -> dict[str, Any]:
     ocr_status = get_ocr_runtime_status()
 
     missing: list[str] = []
-    if not metadata_path.exists():
-        missing.append(f"Falta metadata.json: {metadata_path}")
     if not images_dir.exists():
         missing.append(f"Falta carpeta de imágenes: {images_dir}")
 
@@ -91,22 +227,33 @@ def inspect_case_input_structure(*, context: CaseContext) -> dict[str, Any]:
     metadata_errors: list[str] = []
     warnings: list[str] = []
     target_url: str | None = None
+    infer_messages: list[str] = []
+    metadata_present = metadata_path.exists()
     if metadata_path.exists():
         try:
             metadata = _load_metadata_checked(case_dir)
-            target_url = str(metadata.get("target_url")) if metadata.get("target_url") else None
             if metadata.get("case_id") and metadata["case_id"] != context.case_id:
                 warnings.append(
                     f"metadata.case_id ({metadata['case_id']}) no coincide con carpeta ({context.case_id})."
                 )
-            if not metadata.get("plan_url"):
-                warnings.append("metadata.plan_url no está definido (opcional).")
-            if not metadata.get("activo"):
-                warnings.append("metadata.activo no está definido (opcional).")
-            if not metadata.get("seccion"):
-                warnings.append("metadata.seccion no está definido (opcional).")
         except UserFacingError as exc:
             metadata_errors.append(str(exc))
+    else:
+        warnings.append("No se encontró metadata.json; se intentará resolver metadata desde imágenes.")
+
+    executable = not missing and not metadata_errors
+    inferred_metadata: dict[str, Any] | None = None
+    resolve_error: str | None = None
+    if executable:
+        try:
+            resolved = resolve_case_input(context)
+            target_url = resolved["resolved_metadata"].get("target_url")
+            inferred_metadata = resolved.get("inferred_metadata")
+            infer_messages = resolved.get("messages") or []
+            warnings.extend(resolved.get("warnings") or [])
+        except UserFacingError as exc:
+            resolve_error = str(exc)
+            executable = False
 
     ai_status = {
         "ai_available": False,
@@ -120,9 +267,14 @@ def inspect_case_input_structure(*, context: CaseContext) -> dict[str, Any]:
         "images_dir": str(images_dir),
         "sidecar_path": str(sidecar_path),
         "image_count": len(images),
-        "is_sufficient": not missing and not metadata_errors,
+        "is_sufficient": executable,
+        "is_executable": executable,
         "missing": missing,
+        "metadata_present": metadata_present,
         "metadata_errors": metadata_errors,
+        "resolve_error": resolve_error,
+        "infer_messages": infer_messages,
+        "inferred_metadata": inferred_metadata,
         "warnings": warnings,
         "target_url": target_url,
         "ocr_available": bool(ocr_status.get("ocr_available")),
@@ -357,7 +509,12 @@ def run_case(context: CaseContext) -> dict[str, Any]:
 
     input_check = inspect_case_input_structure(context=context)
     if not input_check.get("is_sufficient"):
-        details = [*input_check.get("missing", []), *input_check.get("metadata_errors", [])]
+        details = [
+            *input_check.get("missing", []),
+            *input_check.get("metadata_errors", []),
+        ]
+        if input_check.get("resolve_error"):
+            details.append(str(input_check.get("resolve_error")))
         formatted = "\n".join(f"- {item}" for item in details)
         raise UserFacingError(f"Estructura de entrada incompleta para {context.case_id}.\n{formatted}")
     if not input_check.get("ocr_available") and not input_check.get("fallback_available"):
@@ -370,10 +527,11 @@ def run_case(context: CaseContext) -> dict[str, Any]:
             f"Sugerencia: {hint}"
         )
 
-    metadata = _load_metadata_checked(case_dir)
+    resolved_case = resolve_case_input(context)
+    metadata = resolved_case["resolved_metadata"]
     output_dir = ensure_output_dir(context.repo_root, context.case_id)
 
-    parsed_plan = parse_measurement_plan(images_dir)
+    parsed_plan = resolved_case["parsed_plan"]
     measurement_case = normalize_case(metadata=metadata, parsed_plan=parsed_plan)
 
     if not measurement_case.get("interacciones"):
@@ -416,6 +574,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
     tag_template_path = output_dir / "tag_template.js"
     trigger_selector_path = output_dir / "trigger_selector.txt"
     report_path = output_dir / "report.md"
+    resolved_case_input_path = output_dir / "resolved_case_input.json"
     run_summary_path = output_dir / "run_summary.json"
 
     with measurement_case_path.open("w", encoding="utf-8") as f:
@@ -423,6 +582,22 @@ def run_case(context: CaseContext) -> dict[str, Any]:
 
     tag_template_path.write_text(tag_template, encoding="utf-8")
     trigger_selector_path.write_text(trigger_selector, encoding="utf-8")
+    resolved_case_input_path.write_text(
+        json.dumps(
+            {
+                "case_id": context.case_id,
+                "metadata_source": resolved_case.get("metadata_source"),
+                "messages": resolved_case.get("messages"),
+                "warnings": resolved_case.get("warnings"),
+                "explicit_metadata": resolved_case.get("explicit_metadata"),
+                "inferred_metadata": resolved_case.get("inferred_metadata"),
+                "resolved_metadata": resolved_case.get("resolved_metadata"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     report_text = _render_report(
         case_id=context.case_id,
@@ -441,6 +616,8 @@ def run_case(context: CaseContext) -> dict[str, Any]:
     used_fallback = any(item.get("extraction_method") == "sidecar_text_support" for item in evidence)
     used_ocr = any(item.get("extraction_method") == "rapidocr_text_support" for item in evidence)
     warning_messages = list(input_check.get("warnings", []))
+    warning_messages.extend(resolved_case.get("warnings") or [])
+    warning_messages.extend(resolved_case.get("messages") or [])
     warning_messages.extend(parsed_plan.get("warnings") or [])
     if fetch_result.warning:
         warning_messages.append(fetch_result.warning)
@@ -464,6 +641,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
             "tag_template": str(tag_template_path),
             "trigger_selector": str(trigger_selector_path),
             "report": str(report_path),
+            "resolved_case_input": str(resolved_case_input_path),
             "run_summary": str(run_summary_path),
         },
         interactions_detected=len(measurement_case.get("interacciones", [])),
@@ -480,6 +658,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         "tag_template": str(tag_template_path),
         "trigger_selector": str(trigger_selector_path),
         "report": str(report_path),
+        "resolved_case_input": str(resolved_case_input_path),
         "run_summary": str(run_summary_path),
         "status": run_summary["status"],
         "warnings_count": len(warning_messages),

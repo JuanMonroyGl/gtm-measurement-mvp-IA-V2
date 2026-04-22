@@ -87,15 +87,23 @@ inputs/<case_id>/
     01.png
     02.png
     ...
-  metadata.json
+  metadata.json   # opcional
 ```
 
 Campos mínimos de `metadata.json`:
-- `case_id` (obligatorio)
-- `target_url` (obligatorio)
+- `case_id` (opcional, se toma de carpeta si falta)
+- `target_url` (opcional en modo images-only)
 - `plan_url` (opcional)
 - `activo` (opcional)
 - `seccion` (opcional)
+
+### Modo images-only (regla de negocio)
+Si no existe `metadata.json`, el sistema:
+- infiere `target_url` desde imágenes,
+- construye metadata resuelta interna,
+- y continúa el pipeline automáticamente.
+
+Si detecta múltiples URLs candidatas o ninguna URL clara, falla con mensaje amigable.
 
 Plantilla lista para copiar:
 - `assets/templates/example_case/`
@@ -142,6 +150,7 @@ python main.py --case-id case_001
 - errores esperables de usuario
 - diagnóstico OCR
 - disponibilidad de fallback (`image_evidence.json`)
+- metadata inferida y ejecutabilidad del caso (images-only o con metadata)
 
 ## Qué hacer cuando OCR no funciona
 1. Ejecuta `--inspect-only` para confirmar diagnóstico.
@@ -161,6 +170,7 @@ Después de ejecutar un caso, se espera:
 - `outputs/<case_id>/tag_template.js`
 - `outputs/<case_id>/report.md`
 - `outputs/<case_id>/run_summary.json`
+- `outputs/<case_id>/resolved_case_input.json`
 
 `run_summary.json` incluye como mínimo:
 - `case_id`
@@ -173,6 +183,11 @@ Después de ejecutar un caso, se espera:
 - ambigüedad detectada
 - outputs generados
 - warnings relevantes
+
+`resolved_case_input.json` deja trazabilidad de:
+- metadata explícita (si existe),
+- metadata inferida desde imágenes,
+- metadata final resuelta usada por el pipeline.
 
 ## Casos validados
 - **case_001**: golden case validado manualmente en GTM Preview.
@@ -199,10 +214,11 @@ python core/checks/compare_case_outputs_against_examples.py --case-id case_001 -
 
 ## Troubleshooting (rápido)
 - **Falta metadata.json**: crea `inputs/<case_id>/metadata.json` con `case_id` y `target_url`.
+- **Falta metadata.json**: en modo images-only no bloquea; el sistema intentará inferir metadata desde imágenes.
 - **No existe images/**: crea `inputs/<case_id>/images/`.
 - **No hay imágenes**: agrega al menos un `.png/.jpg/.jpeg/.webp`.
 - **JSON mal formado**: valida sintaxis en `metadata.json`.
-- **Falta target_url**: agrega `target_url` en metadata.
+- **No se pudo inferir URL**: revisa calidad/texto de imágenes o agrega `metadata.json` con `target_url`.
 - **Falla OCR al importar librerías**: corre `inspect` y revisa `ocr_diagnostic`.
 - **Sin OCR y sin fallback**: el pipeline debe fallar temprano; agrega/corrige `image_evidence.json` o habilita OCR.
 - **Selectores ambiguos**: revisar `report.md` y ajustar estrategia de selector en validación humana.
