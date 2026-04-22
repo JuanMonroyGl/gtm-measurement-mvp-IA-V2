@@ -22,8 +22,8 @@ def _assert(condition: bool, message: str) -> None:
 def check_case_outputs(repo_root: Path, case_id: str) -> None:
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
-    from processing.validation.case_metrics import compute_case_metrics
-    from processing.validation.schema_validation import validate_measurement_case_schema
+    from core.processing.validation.case_metrics import compute_case_metrics
+    from core.processing.validation.schema_validation import validate_measurement_case_schema
 
     output_dir = repo_root / "outputs" / case_id
     measurement_case_path = output_dir / "measurement_case.json"

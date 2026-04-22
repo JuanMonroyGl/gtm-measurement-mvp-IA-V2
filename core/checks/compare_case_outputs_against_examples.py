@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare generated case outputs against manual benchmark files in examples/."""
+"""Compare generated case outputs against manual benchmark files in assets/examples/."""
 
 from __future__ import annotations
 
@@ -39,9 +39,9 @@ def main() -> None:
         "trigger": root / "outputs" / case_id / "trigger_selector.txt",
     }
     expected = {
-        "tag": root / "examples" / f"{case_id}_expected_tag.js",
-        "trigger": root / "examples" / f"{case_id}_expected_trigger.txt",
-        "notes": root / "examples" / f"{case_id}_notes.md",
+        "tag": root / "assets" / "examples" / f"{case_id}_expected_tag.js",
+        "trigger": root / "assets" / "examples" / f"{case_id}_expected_trigger.txt",
+        "notes": root / "assets" / "examples" / f"{case_id}_notes.md",
     }
 
     missing = [str(path) for path in [*generated.values(), *expected.values()] if not path.exists()]

@@ -1,0 +1,8 @@
+{
+  "case_id": "example_case",
+  "target_url": "https://www.bancolombia.com/personas/pagos/apple-pay",
+  "plan_url": "https://www.bancolombia.com/personas/pagos/apple-pay",
+  "activo": "bancolombia",
+  "seccion": "pagos",
+  "notes": "Plantilla base: reemplazar URLs, activo y seccion según el caso real."
+}

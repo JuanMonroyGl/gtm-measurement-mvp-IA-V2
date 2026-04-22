@@ -19,7 +19,7 @@ class SchemaValidationResult:
 
 def validate_measurement_case_schema(repo_root: Path, measurement_case: dict[str, Any]) -> SchemaValidationResult:
     """Validate a measurement_case payload against the project JSON schema."""
-    schema_path = repo_root / "schemas" / "measurement_case.schema.json"
+    schema_path = repo_root / "assets" / "schemas" / "measurement_case.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     validator = Draft202012Validator(schema)
 
