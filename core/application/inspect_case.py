@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -39,22 +40,41 @@ def inspect_case_input_structure(*, context: CaseContext) -> dict[str, Any]:
         warnings.append("No se encontró metadata.json; se intentará resolver metadata desde el plan preparado.")
 
     intake_result: dict[str, Any] | None = None
+    native_text_entries: list[dict[str, Any]] = []
     intake_error: str | None = None
     prepared_images_dir: str | None = None
 
     try:
         intake_result = prepare_case_assets(context=context)
         prepared_images_dir = intake_result["prepared_images_dir"]
+        native_text_entries = intake_result.get("native_text_entries") or []
     except CaseAssetPreparationError as exc:
         intake_error = str(exc)
         missing.append(str(exc))
+        manifest_path = context.repo_root / "outputs" / context.case_id / "prepared_assets" / "asset_manifest.json"
+        if manifest_path.exists():
+            try:
+                manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+                intake_result = {
+                    "manifest": manifest_payload,
+                    "manifest_path": str(manifest_path),
+                    "prepared_images_dir": str(context.repo_root / "outputs" / context.case_id / "prepared_assets" / "images"),
+                    "selected_input_path": None,
+                    "native_text_path": str(context.repo_root / "outputs" / context.case_id / "prepared_assets" / "native_text.json"),
+                }
+            except json.JSONDecodeError:
+                pass
 
     executable = not missing and not metadata_errors
     resolve_error: str | None = None
 
     if executable and prepared_images_dir:
         try:
-            resolved = resolve_case_input(context, images_dir=Path(prepared_images_dir))
+            resolved = resolve_case_input(
+                context,
+                images_dir=Path(prepared_images_dir),
+                native_text_entries=native_text_entries,
+            )
             target_url = resolved["resolved_metadata"].get("target_url")
             inferred_metadata = resolved.get("inferred_metadata")
             infer_messages = resolved.get("messages") or []
@@ -96,10 +116,12 @@ def inspect_case_input_structure(*, context: CaseContext) -> dict[str, Any]:
         "intake": {
             "detected_input_type": prepared_manifest.get("input_type"),
             "files_found": intake_files,
+            "selected_input_path": (intake_result or {}).get("selected_input_path") or prepared_manifest.get("selected_input_path"),
             "prepared_images_dir": (intake_result or {}).get("prepared_images_dir"),
             "prepared_images": prepared_images,
             "prepared_images_count": len(prepared_images),
             "manifest_path": (intake_result or {}).get("manifest_path"),
+            "native_text_path": (intake_result or {}).get("native_text_path") or prepared_manifest.get("native_text_path"),
             "warnings": prepared_manifest.get("warnings") or [],
             "errors": prepared_manifest.get("errors") or ([] if not intake_error else [intake_error]),
             "ready": bool(prepared_manifest.get("ready")),

@@ -221,16 +221,17 @@ def extract_support_text_from_images(case_images_dir: Path) -> list[ImageEvidenc
     """Extract textual support evidence from images.
 
     Priority:
-    1. OCR via RapidOCR when available.
-    2. Sidecar evidence file (`image_evidence.json`) when OCR is unavailable.
+    1. Sidecar/native evidence (`image_evidence.json`) when available.
+    2. OCR via RapidOCR.
     """
     images = discover_case_images(case_images_dir)
     evidences: list[ImageEvidence] = []
 
+    sidecar_evidences = _load_sidecar_evidence(case_images_dir)
+    if sidecar_evidences:
+        return sidecar_evidences
+
     if RapidOCR is None:
-        sidecar_evidences = _load_sidecar_evidence(case_images_dir)
-        if sidecar_evidences:
-            return sidecar_evidences
 
         for image_path in images:
             evidences.append(
@@ -248,10 +249,6 @@ def extract_support_text_from_images(case_images_dir: Path) -> list[ImageEvidenc
     try:
         ocr = RapidOCR()
     except Exception:
-        sidecar_evidences = _load_sidecar_evidence(case_images_dir)
-        if sidecar_evidences:
-            return sidecar_evidences
-
         for image_path in images:
             evidences.append(
                 ImageEvidence(

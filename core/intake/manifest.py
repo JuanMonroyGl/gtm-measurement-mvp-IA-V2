@@ -19,10 +19,12 @@ class AssetManifest:
     case_id: str
     input_type: str
     source_files: list[str]
+    selected_input_path: str | None
     prepared_images: list[PreparedImage]
     warnings: list[str]
     errors: list[str]
     ready: bool
+    native_text_path: str | None = None
 
     def to_dict(self) -> dict:
         payload = asdict(self)

@@ -1,128 +1,100 @@
 # GTM Measurement MVP
 
-## Resumen
-Este MVP procesa planes de medición y genera artefactos técnicos para GTM (`measurement_case.json`, `tag_template.js`, `trigger_selector.txt`, `report.md`).
+## Uso recomendado (sin fricción)
+1. Crear `inputs/<case_id>/`.
+2. Poner **solo una fuente del plan** (archivo o carpeta de imágenes).
+3. Ejecutar `python main.py inspect --case-path inputs/<case_id>`.
+4. Ejecutar `python main.py run --case-path inputs/<case_id>`.
 
-## Formatos de entrada soportados (fase actual, sin IA)
-El caso puede llegar en **uno** de estos formatos:
+No debes declarar el tipo de input manualmente.
 
-### A) Carpeta de imágenes
+## Inputs soportados (autodetección)
+El sistema detecta automáticamente cualquiera de estos formatos:
+
+A)
 ```text
 inputs/<case_id>/images/
   01.png
-  02.jpg
+  02.png
 ```
 
-### B) PDF
+B)
 ```text
-inputs/<case_id>/source/
-  plan.pdf
+inputs/<case_id>/plan.pdf
 ```
 
-### C) PPTX
+C)
 ```text
-inputs/<case_id>/source/
-  plan.pptx
+inputs/<case_id>/plan.pptx
 ```
 
-Metadata opcional en todos los casos:
+D)
 ```text
-inputs/<case_id>/metadata.json
+inputs/<case_id>/source/plan.pdf
 ```
 
-## Flujo nuevo de intake/preparación
-Antes de OCR/lectura del plan, el backend ejecuta una capa de intake:
+E)
+```text
+inputs/<case_id>/source/plan.pptx
+```
 
-1. Detecta el tipo de input del caso.
-2. Prepara assets en estructura estándar.
-3. Convierte PDF/PPTX a imágenes cuando aplica.
-4. Deja trazabilidad en manifiesto.
-5. Continúa el pipeline usando siempre `prepared_assets/images/`.
+También puede detectar un único PDF/PPTX con otro nombre razonable (no requiere `plan.pdf` exacto).
 
-Estructura interna generada:
+## Reglas de autodetección
+- `images/` + imágenes válidas => flujo imágenes.
+- un único PDF en raíz o `source/` => flujo PDF.
+- un único PPTX en raíz o `source/` => flujo PPTX.
+- múltiples fuentes incompatibles => error amigable.
+- múltiples PDFs o múltiples PPTX => error amigable.
+- `.ppt` legacy => no soportado, sugerencia de convertir a `.pptx`.
+
+## Comportamiento por tipo
+### Images
+- OCR / `image_evidence.json` como hoy.
+
+### PDF
+- extrae texto nativo por página,
+- renderiza páginas a imágenes,
+- guarda ambos artefactos en `prepared_assets/`,
+- prioriza texto nativo para inferir metadata.
+
+### PPTX
+- extrae texto nativo por slide,
+- usa ese texto como fuente principal de inferencia,
+- intenta renderizar slides a imágenes con LibreOffice,
+- si no hay LibreOffice, continúa con texto nativo (no bloquea por eso).
+
+## DOM acquisition (web)
+- Estrategia principal: Playwright (DOM renderizado).
+- Fallback: fetch de HTML crudo cuando Playwright no está disponible o falla.
+- El pipeline deja warnings claros cuando cae a fallback.
+
+## Salida estandarizada de intake
 ```text
 outputs/<case_id>/prepared_assets/
   asset_manifest.json
+  native_text.json          # cuando aplica (PDF/PPTX)
+  image_evidence.json       # soporte textual para parser
   images/
     001.png
     002.png
 ```
 
-## Comandos
-### Inspección (no ejecuta pipeline completo)
-```bash
-python main.py inspect --case-path inputs/<case_id>
-```
-
-`inspect` reporta:
-- tipo detectado,
-- archivos encontrados,
-- imágenes preparadas,
-- warnings/errores,
-- si el caso quedó listo para ejecutar.
-
-### Ejecución completa
-```bash
-python main.py run --case-path inputs/<case_id>
-```
-
-`run` toma siempre como base `outputs/<case_id>/prepared_assets/images/`.
-
 ## Dependencias
-Instalación base:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Dependencias relevantes para intake:
-- `pypdfium2`: conversión PDF -> imágenes.
-- LibreOffice (`soffice` o `libreoffice` en PATH): conversión PPTX -> PDF.
+Nuevas dependencias clave:
+- `pypdf` para texto nativo de PDF.
+- `python-pptx` para texto nativo de PPTX.
+- `pypdfium2` para render de PDF a imágenes.
+- LibreOffice opcional para render de PPTX a imágenes.
 
-## Errores amigables esperados
-El intake falla temprano y explica causa cuando:
-- no se encontró input válido,
-- hay múltiples fuentes incompatibles,
-- formato no soportado,
-- no se pudo convertir PDF/PPTX,
-- `.ppt` legacy detectado (sugerencia: convertir a `.pptx`).
-
-## Outputs esperados por `run`
-- `outputs/<case_id>/prepared_assets/asset_manifest.json`
-- `outputs/<case_id>/prepared_assets/images/*`
-- `outputs/<case_id>/measurement_case.json`
-- `outputs/<case_id>/tag_template.js`
-- `outputs/<case_id>/trigger_selector.txt`
-- `outputs/<case_id>/report.md`
-- `outputs/<case_id>/run_summary.json`
-- `outputs/<case_id>/resolved_case_input.json`
-
-## Pruebas rápidas recomendadas
-Caso con imágenes:
-```bash
-python main.py inspect --case-path inputs/case_001
-python main.py run --case-path inputs/case_001
-```
-
-Caso con PDF:
-```bash
-mkdir -p inputs/case_pdf/source
-cp /ruta/plan.pdf inputs/case_pdf/source/plan.pdf
-python main.py inspect --case-path inputs/case_pdf
-python main.py run --case-path inputs/case_pdf
-```
-
-Caso con PPTX:
-```bash
-mkdir -p inputs/case_pptx/source
-cp /ruta/plan.pptx inputs/case_pptx/source/plan.pptx
-python main.py inspect --case-path inputs/case_pptx
-python main.py run --case-path inputs/case_pptx
-```
-
-## Límites honestos de esta fase
-- No hay IA en intake.
-- `.ppt` legacy no está soportado.
-- Conversión PPTX depende de LibreOffice instalado en sistema.
-- Si OCR no está disponible y no existe `image_evidence.json`, el pipeline se detiene.
+## Límites honestos (fase sin IA)
+- No hay IA en intake ni scraping.
+- `.ppt` no soportado.
+- Si no hay `target_url` resoluble desde metadata o evidencia textual, el caso falla con error claro.
+- Render visual de PPTX depende de LibreOffice; sin LibreOffice se continúa solo con texto nativo.
