@@ -19,8 +19,7 @@ from core.processing.selectors.build_selectors import propose_selectors
 from core.processing.selectors.validate_selectors import validate_selector_candidates
 from core.processing.validation.case_metrics import compute_case_metrics
 from core.processing.validation.schema_validation import validate_measurement_case_schema
-from core.web_scraping.fetch_page import fetch_html
-from core.web_scraping.snapshot_dom import build_dom_snapshot
+from web_scraping.snapshot_dom import build_dom_snapshot
 
 
 def ensure_output_dir(repo_root: Path, case_id: str) -> Path:
@@ -50,7 +49,17 @@ def run_case(context: CaseContext) -> dict[str, Any]:
             f"Sugerencia: {hint}"
         )
 
-    resolved_case = resolve_case_input(context)
+    intake = input_check.get("intake") or {}
+    prepared_images_dir = intake.get("prepared_images_dir")
+    if not prepared_images_dir:
+        raise UserFacingError("No existe prepared_assets/images para continuar el pipeline.")
+
+    native_text_entries = intake.get("native_text_entries") or []
+    resolved_case = resolve_case_input(
+        context,
+        images_dir=Path(prepared_images_dir),
+        native_text_entries=native_text_entries,
+    )
     metadata = resolved_case["resolved_metadata"]
     output_dir = ensure_output_dir(context.repo_root, context.case_id)
 
@@ -64,11 +73,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         )
 
     target_url = measurement_case.get("target_url")
-    fetch_result = fetch_html(target_url=target_url) if target_url else fetch_html(target_url="")
-    dom_snapshot = build_dom_snapshot(
-        target_url=target_url or "",
-        raw_html=fetch_result.html,
-    )
+    dom_snapshot = build_dom_snapshot(target_url=target_url or "")
 
     selector_build_result = propose_selectors(
         measurement_case=measurement_case,
@@ -126,7 +131,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         case_id=context.case_id,
         parsed_plan=parsed_plan,
         measurement_case=measurement_case,
-        fetch_warning=fetch_result.warning,
+        fetch_warning=dom_snapshot.fetch_warning,
         dom_warning=dom_snapshot.warning,
         selector_build_result=selector_build_result,
         selector_validation=selector_validation,
@@ -142,8 +147,8 @@ def run_case(context: CaseContext) -> dict[str, Any]:
     warning_messages.extend(resolved_case.get("warnings") or [])
     warning_messages.extend(resolved_case.get("messages") or [])
     warning_messages.extend(parsed_plan.get("warnings") or [])
-    if fetch_result.warning:
-        warning_messages.append(fetch_result.warning)
+    if dom_snapshot.fetch_warning:
+        warning_messages.append(dom_snapshot.fetch_warning)
     if dom_snapshot.warning:
         warning_messages.append(dom_snapshot.warning)
     for interaction in measurement_case.get("interacciones", []):
@@ -160,6 +165,7 @@ def run_case(context: CaseContext) -> dict[str, Any]:
         status="warning" if warning_messages else "success",
         warning_messages=warning_messages,
         outputs_generated={
+            "asset_manifest": str((Path(prepared_images_dir).parent / "asset_manifest.json")),
             "measurement_case": str(measurement_case_path),
             "tag_template": str(tag_template_path),
             "trigger_selector": str(trigger_selector_path),
