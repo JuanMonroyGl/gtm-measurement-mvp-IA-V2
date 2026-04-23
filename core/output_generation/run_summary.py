@@ -18,6 +18,9 @@ def build_run_summary(
     ambiguity_detected: bool | None = None,
     used_ocr: bool | None = None,
     used_fallback: bool | None = None,
+    render_engine: str | None = None,
+    selector_metrics: dict[str, Any] | None = None,
+    gate_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "case_id": context.case_id,
@@ -33,12 +36,15 @@ def build_run_summary(
         "runtime": {
             "used_ocr": used_ocr,
             "used_fallback": used_fallback,
+            "render_engine": render_engine,
             "ai_available": (inspect_result.get("ai_status") or {}).get("ai_available"),
             "ocr_available": inspect_result.get("ocr_available"),
             "fallback_available": inspect_result.get("fallback_available"),
         },
         "interactions_detected": interactions_detected,
         "ambiguity_detected": ambiguity_detected,
+        "selector_metrics": selector_metrics or {},
+        "gate": gate_result or {},
         "outputs_generated": outputs_generated or {},
         "warnings": warning_messages,
     }

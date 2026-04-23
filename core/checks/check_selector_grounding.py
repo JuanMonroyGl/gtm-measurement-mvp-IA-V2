@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Regression check: selectors must be grounded in clickable inventory evidence."""
+"""Strict regression check: promoted selectors must be grounded in rendered DOM."""
 
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
+
+from core.checks.output_gate import evaluate_selector_grounding
 
 
 def main() -> None:
@@ -30,30 +32,9 @@ def main() -> None:
     selector_trace = json.loads(selector_trace_path.read_text(encoding="utf-8"))
     clickable_inventory = json.loads(clickable_inventory_path.read_text(encoding="utf-8"))
 
-    observed_selectors = set()
-    for item in clickable_inventory.get("items", []):
-        for selector in item.get("selector_candidates") or []:
-            observed_selectors.add(str(selector))
-
-    evidence_by_index = {int(item.get("index")): item for item in selector_trace.get("selector_evidence") or [] if item.get("index")}
-
-    for idx, interaction in enumerate(measurement_case.get("interacciones", []), start=1):
-        selector = interaction.get("selector_candidato")
-        evidence = evidence_by_index.get(idx, {})
-        origin = evidence.get("selector_origin")
-
-        if selector is None:
-            continue
-
-        if origin != "observed_in_dom":
-            raise SystemExit(
-                f"ERROR: interaction[{idx}] selector has non-observed origin: selector={selector}, origin={origin}"
-            )
-
-        if selector not in observed_selectors:
-            raise SystemExit(
-                f"ERROR: interaction[{idx}] selector is not present in clickable inventory: {selector}"
-            )
+    result = evaluate_selector_grounding(measurement_case, selector_trace, clickable_inventory)
+    if not result["passed"]:
+        raise SystemExit("ERROR: " + "; ".join(result["errors"]))
 
     print("OK: selector grounding checks passed")
 

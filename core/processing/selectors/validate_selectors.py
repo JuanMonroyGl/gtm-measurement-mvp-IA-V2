@@ -1,10 +1,13 @@
-"""Validate selector candidates against DOM snapshot and observed inventory."""
+"""Validate selector candidates against grounded DOM evidence."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from bs4 import BeautifulSoup
+from core.processing.selectors.build_selectors import (
+    SELECTOR_ORIGIN_RENDERED,
+    SELECTOR_ORIGIN_REJECTED,
+)
 
 
 def validate_selector_candidates(
@@ -20,8 +23,8 @@ def validate_selector_candidates(
             "warnings": ["No hay DOM disponible para validar selectores."],
         }
 
-    selector_origin_by_index = {
-        int(item.get("index")): str(item.get("selector_origin"))
+    evidence_by_index = {
+        int(item.get("index")): item
         for item in (selector_evidence or [])
         if item.get("index")
     }
@@ -29,51 +32,68 @@ def validate_selector_candidates(
     validated = 0
     warnings: list[str] = []
 
-    # validate against best state count
-    soups = {state: BeautifulSoup(html, "lxml") for state, html in state_html.items()}
-
     for idx, interaction in enumerate(measurement_case.get("interacciones", []), start=1):
-        selector = interaction.get("selector_candidato")
+        evidence = evidence_by_index.get(idx, {})
+        chosen = evidence.get("chosen") or {}
         interaction.setdefault("warnings", [])
 
-        if selector_origin_by_index.get(idx) != "observed_in_dom":
+        if evidence.get("selector_origin") != SELECTOR_ORIGIN_RENDERED or not evidence.get("promoted"):
             interaction["selector_candidato"] = None
             interaction["selector_activador"] = None
-            interaction["match_count"] = None
+            interaction["match_count"] = int(chosen.get("match_count") or 0)
             interaction["warnings"].append(
-                "Selector rechazado por no estar observado en DOM renderizado; human_review_required=true."
+                "Selector rechazado por no cumplir grounding renderizado suficiente; human_review_required=true."
             )
             continue
 
-        if not selector:
-            interaction["match_count"] = None
-            interaction["warnings"].append("Sin selector_candidato observado; no se valida match_count.")
-            continue
-
-        match_count = 0
-        for soup in soups.values():
-            try:
-                match_count = max(match_count, len(soup.select(selector)))
-            except Exception as exc:
-                warnings.append(f"Selector inválido detectado: {selector} ({exc})")
-
-        interaction["match_count"] = match_count if match_count > 0 else None
         validated += 1
+        interaction["match_count"] = int(chosen.get("match_count") or 0)
 
-        if match_count == 0:
+        if not chosen.get("exists_in_dom"):
             interaction["selector_candidato"] = None
             interaction["selector_activador"] = None
-            interaction["match_count"] = None
             interaction["warnings"].append(
-                "Selector no encontró matches en estados renderizados; se deja null y human_review_required=true."
+                "Selector no existe en los estados renderizados validados; se deja null."
             )
-        elif match_count > 1:
+            continue
+        if not chosen.get("matches_candidate_node"):
+            interaction["selector_candidato"] = None
+            interaction["selector_activador"] = None
             interaction["warnings"].append(
-                f"Selector observado pero ambiguo ({match_count} matches); se requiere revisión humana."
+                "Selector existe en DOM pero no selecciona el nodo candidato observado; se deja null."
             )
+            continue
+        if not chosen.get("closest_runtime_supported"):
+            interaction["selector_candidato"] = None
+            interaction["selector_activador"] = None
+            interaction["warnings"].append(
+                "Selector no demuestra soporte real para event.target.closest(selector); se deja null."
+            )
+            continue
+        if not chosen.get("click_grounded"):
+            interaction["selector_candidato"] = None
+            interaction["selector_activador"] = None
+            interaction["warnings"].append(
+                "Selector no queda click_grounded después de validar runtime flags; se deja null."
+            )
+            continue
+        if interaction.get("match_count") != 1:
+            interaction["selector_candidato"] = None
+            interaction["selector_activador"] = None
+            interaction["warnings"].append(
+                f"Selector renderizado pero ambiguo ({interaction['match_count']} matches); se deja null."
+            )
+            continue
+
+    promoted_after_validation = sum(
+        1 for interaction in measurement_case.get("interacciones", []) if interaction.get("selector_candidato")
+    )
+    if promoted_after_validation == 0:
+        warnings.append("No quedó ningún selector autopromovido tras la validación final.")
 
     return {
-        "status": "ok",
+        "status": "ok" if promoted_after_validation > 0 else SELECTOR_ORIGIN_REJECTED,
         "validated_interactions": validated,
+        "promoted_after_validation": promoted_after_validation,
         "warnings": warnings,
     }

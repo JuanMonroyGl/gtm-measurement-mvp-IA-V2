@@ -68,6 +68,7 @@ También puede detectar un único PDF/PPTX con otro nombre razonable (no requier
 - Estrategia principal: Playwright (DOM renderizado).
 - Fallback: fetch de HTML crudo cuando Playwright no está disponible o falla.
 - El pipeline deja warnings claros cuando cae a fallback.
+- `raw_html_fallback` no se trata como `observed_rendered_dom`: no autopromueve selector final.
 
 ## Salida estandarizada de intake
 ```text
@@ -85,28 +86,34 @@ outputs/<case_id>/prepared_assets/
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python -m playwright install chromium
 ```
 
 Nuevas dependencias clave:
 - `pypdf` para texto nativo de PDF.
 - `python-pptx` para texto nativo de PPTX.
 - `pypdfium2` para render de PDF a imágenes.
+- `playwright` para adquisición real de DOM renderizado.
 - LibreOffice opcional para render de PPTX a imágenes.
 
 ## Límites honestos (fase sin IA)
 - No hay IA en intake ni scraping.
 - `.ppt` no soportado.
 - Si no hay `target_url` resoluble desde metadata o evidencia textual, el caso falla con error claro.
+- Si Playwright o el navegador Chromium no están instalados, el scraping degrada a `raw_html_fallback` y el gate estricto puede rechazar el caso.
 - Render visual de PPTX depende de LibreOffice; sin LibreOffice se continúa solo con texto nativo.
 
 
 ## Endurecimiento de selectores (DOM real)
-- El pipeline solo promueve selectores `observed_in_dom` (vistos y validados en DOM renderizado).
+- El pipeline solo autopromueve selectores `observed_rendered_dom`.
+- `raw_html_fallback` queda degradado: warning explícito, revisión humana obligatoria y sin autopromoción final.
 - Si no hay evidencia DOM suficiente, el selector queda en `null` y se marca revisión humana en trazas/reporte.
 - Se genera `outputs/<case_id>/clickable_inventory.json` con inventario de nodos accionables por estado.
 - Se genera `outputs/<case_id>/selector_trace.json` con evidencia de selección/rechazo por interacción.
+- `report.md` y `run_summary.json` incluyen estados verificados, origen del selector, métricas de rechazo y resultado del gate final.
 
 Checks recomendados:
 ```bash
 python core/checks/check_selector_grounding.py --case-id case_001 --repo-root .
+python core/checks/check_case_output.py --case-id case_001 --repo-root .
 ```

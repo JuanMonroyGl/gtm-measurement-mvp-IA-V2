@@ -9,6 +9,20 @@ def _escape_js(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _selector_priority(selector: str) -> int:
+    if selector.startswith("#"):
+        return 100
+    if "[data-" in selector:
+        return 80
+    if "[aria-" in selector:
+        return 70
+    if "[href=" in selector:
+        return 60
+    if "." in selector:
+        return 40
+    return 10
+
+
 def _build_selector_rules(measurement_case: dict[str, Any]) -> list[tuple[str, str, str, str]]:
     rules: list[tuple[str, str, str, str]] = []
     for interaction in measurement_case.get("interacciones", []):
@@ -23,6 +37,7 @@ def _build_selector_rules(measurement_case: dict[str, Any]) -> list[tuple[str, s
                 str(interaction.get("ubicacion") or ""),
             )
         )
+    rules.sort(key=lambda item: (_selector_priority(item[0]), len(item[0])), reverse=True)
     return rules
 
 

@@ -1,4 +1,4 @@
-"""Minimal regression checks for generated MVP outputs."""
+"""Strict regression checks for generated MVP outputs."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+from core.checks.output_gate import evaluate_output_gate
 
 STUB_MARKERS = [
     "Stub GTM tag template",
@@ -29,12 +31,21 @@ def check_case_outputs(repo_root: Path, case_id: str) -> None:
     measurement_case_path = output_dir / "measurement_case.json"
     tag_template_path = output_dir / "tag_template.js"
     trigger_selector_path = output_dir / "trigger_selector.txt"
+    selector_trace_path = output_dir / "selector_trace.json"
+    clickable_inventory_path = output_dir / "clickable_inventory.json"
 
-    _assert(measurement_case_path.exists(), f"Missing file: {measurement_case_path}")
-    _assert(tag_template_path.exists(), f"Missing file: {tag_template_path}")
-    _assert(trigger_selector_path.exists(), f"Missing file: {trigger_selector_path}")
+    for path in (
+        measurement_case_path,
+        tag_template_path,
+        trigger_selector_path,
+        selector_trace_path,
+        clickable_inventory_path,
+    ):
+        _assert(path.exists(), f"Missing file: {path}")
 
     measurement_case = json.loads(measurement_case_path.read_text(encoding="utf-8"))
+    selector_trace = json.loads(selector_trace_path.read_text(encoding="utf-8"))
+    clickable_inventory = json.loads(clickable_inventory_path.read_text(encoding="utf-8"))
     schema_validation = validate_measurement_case_schema(repo_root=repo_root, measurement_case=measurement_case)
     _assert(
         schema_validation.valid,
@@ -64,30 +75,11 @@ def check_case_outputs(repo_root: Path, case_id: str) -> None:
                 f"interaction[{idx}] selector_activador should match consolidated pattern",
             )
 
-    metrics = compute_case_metrics(measurement_case)
+    metrics = compute_case_metrics(measurement_case, selector_trace.get("selector_evidence"))
     _assert(metrics["total_interactions"] == len(interactions), "metrics total_interactions mismatch")
     _assert(
         metrics["match_count_0"] + metrics["match_count_1"] + metrics["match_count_gt_1"] <= len(interactions),
         "metrics match_count buckets are inconsistent",
-    )
-
-    selector_payloads: dict[str, set[tuple[str, str, str]]] = {}
-    for interaction in interactions:
-        selector = interaction.get("selector_candidato")
-        if not selector:
-            continue
-        selector_payloads.setdefault(selector, set()).add(
-            (
-                str(interaction.get("tipo_evento") or ""),
-                str(interaction.get("flujo") or ""),
-                str(interaction.get("ubicacion") or ""),
-            )
-        )
-    conflicts = {selector: payloads for selector, payloads in selector_payloads.items() if len(payloads) > 1}
-    _assert(
-        not conflicts,
-        "duplicate selector_candidato with conflicting payloads detected: "
-        + "; ".join(f"{selector} -> {sorted(payloads)}" for selector, payloads in conflicts.items()),
     )
 
     tag_template = tag_template_path.read_text(encoding="utf-8")
@@ -98,11 +90,20 @@ def check_case_outputs(repo_root: Path, case_id: str) -> None:
     trigger_selector = trigger_selector_path.read_text(encoding="utf-8")
     _assert(trigger_selector.strip() != "", "trigger_selector.txt is empty")
 
-    print("OK: minimal output checks passed")
+    gate = evaluate_output_gate(
+        measurement_case=measurement_case,
+        selector_trace=selector_trace,
+        clickable_inventory=clickable_inventory,
+        tag_template=tag_template,
+        trigger_selector=trigger_selector,
+    )
+    _assert(gate["passed"], "output gate failed: " + "; ".join(gate["errors"]))
+
+    print("OK: strict output checks passed")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run minimal regression checks for a generated case")
+    parser = argparse.ArgumentParser(description="Run strict regression checks for a generated case")
     parser.add_argument("--repo-root", default=".")
     parser.add_argument("--case-id", required=True)
     args = parser.parse_args()
