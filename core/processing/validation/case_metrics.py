@@ -21,6 +21,8 @@ def compute_case_metrics(
 
     with_selector = 0
     null_selectors = 0
+    group_interactions = 0
+    single_interactions = 0
     match_count_0 = 0
     match_count_1 = 0
     match_count_gt_1 = 0
@@ -28,6 +30,10 @@ def compute_case_metrics(
     total_warnings = 0
 
     for interaction in interactions:
+        if str(interaction.get("interaction_mode") or "single").lower() == "group":
+            group_interactions += 1
+        else:
+            single_interactions += 1
         if interaction.get("selector_candidato"):
             with_selector += 1
         else:
@@ -66,6 +72,8 @@ def compute_case_metrics(
 
     return {
         "total_interactions": total,
+        "group_interactions": group_interactions,
+        "single_interactions": single_interactions,
         "interactions_with_selector": with_selector,
         "null_selectors": null_selectors,
         "match_count_0": match_count_0,

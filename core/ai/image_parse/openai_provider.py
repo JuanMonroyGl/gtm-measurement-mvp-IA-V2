@@ -39,9 +39,11 @@ class OpenAIImageParseProvider:
                 "type": "input_text",
                 "text": (
                     "Extrae SOLO JSON válido con esta forma: "
-                    "{activo, seccion, interactions:[{tipo_evento, flujo, ubicacion, texto_referencia, confidence, warning}]}. "
+                    "{activo, seccion, interactions:[{tipo_evento, flujo, ubicacion, texto_referencia, interaction_mode, group_context, zone_hint, confidence, warning}]}. "
                     "Reglas: no inventar campos faltantes; usar null cuando falte evidencia; "
-                    "tipo_evento permitido: Clic Boton|Clic Card|Clic Link|Clic Tap."
+                    "tipo_evento permitido: Clic Boton|Clic Card|Clic Link|Clic Tap. "
+                    "interaction_mode solo puede ser single o group. "
+                    "La IA puede clasificar interaction_mode, group_context y zone_hint, pero NO proponer selectores."
                 ),
             }
         ]

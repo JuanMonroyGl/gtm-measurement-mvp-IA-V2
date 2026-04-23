@@ -12,6 +12,9 @@ class Interaction(BaseModel):
     flujo: str | None = None
     ubicacion: str | None = None
     texto_referencia: str | None = None
+    interaction_mode: Literal["single", "group"] | None = None
+    group_context: str | None = None
+    zone_hint: str | None = None
     confidence: float = 0.0
     warning: str | None = None
 

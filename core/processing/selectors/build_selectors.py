@@ -20,6 +20,15 @@ SELECTOR_TYPE_WEIGHTS = {
     "class": 35,
     "tag": 5,
 }
+STATEFUL_CLASS_TOKENS = (
+    "active",
+    "current",
+    "selected",
+    "open",
+    "show",
+    "next",
+    "prev",
+)
 
 
 def _normalize(text: str | None) -> str:
@@ -36,6 +45,14 @@ def _normalize(text: str | None) -> str:
         "ü": "u",
         "ñ": "n",
         "¿": "",
+        "Ã¡": "a",
+        "Ã©": "e",
+        "Ã­": "i",
+        "Ã³": "o",
+        "Ãº": "u",
+        "Ã¼": "u",
+        "Ã±": "n",
+        "Â¿": "",
         "?": "",
     }
     for src, dst in replacements.items():
@@ -68,10 +85,20 @@ def _tokenize(value: str | None) -> list[str]:
     return [token for token in re.split(r"[^a-z0-9]+", normalized) if len(token) >= 3 and token not in stopwords]
 
 
+def _normalized_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, str) and item.strip()]
+
+
 def _interaction_tokens(interaction: dict[str, Any]) -> list[str]:
     tokens: list[str] = []
-    for field in ("texto_referencia", "elemento", "ubicacion", "flujo", "tipo_evento"):
+    for field in ("texto_referencia", "elemento", "ubicacion", "flujo", "tipo_evento", "group_context", "zone_hint"):
         tokens.extend(_tokenize(interaction.get(field)))
+    for value in _normalized_list(interaction.get("element_variants")):
+        tokens.extend(_tokenize(value))
+    for value in _normalized_list(interaction.get("title_variants")):
+        tokens.extend(_tokenize(value))
     return list(dict.fromkeys(tokens))
 
 
@@ -322,6 +349,448 @@ def _selector_trace_summary(selector_evidence: list[dict[str, Any]]) -> dict[str
     return summary
 
 
+def _stable_classes(classes: list[str] | None) -> list[str]:
+    stable: list[str] = []
+    for value in classes or []:
+        if not value or len(value) <= 2:
+            continue
+        normalized = value.lower()
+        if any(token in normalized for token in STATEFUL_CLASS_TOKENS):
+            continue
+        stable.append(value)
+    return stable
+
+
+def _item_direct_haystack(item: dict[str, Any]) -> str:
+    return _normalize(
+        " ".join(
+            [
+                str(item.get("text") or ""),
+                str(item.get("aria_label") or ""),
+                str(item.get("title") or ""),
+                str(item.get("href") or ""),
+                str(item.get("id") or ""),
+            ]
+        )
+    )
+
+
+def _item_context_haystack(item: dict[str, Any]) -> str:
+    return _normalize(
+        " ".join(
+            [
+                str(item.get("context_text") or ""),
+                " ".join(
+                    " ".join(
+                        [
+                            str(ancestor.get("tag") or ""),
+                            str(ancestor.get("id") or ""),
+                            " ".join(ancestor.get("classes") or []),
+                        ]
+                    )
+                    for ancestor in (item.get("ancestors") or [])
+                ),
+            ]
+        )
+    )
+
+
+def _variant_matches(variants: list[str], direct_haystack: str, context_haystack: str) -> tuple[list[str], list[str]]:
+    direct_matches: list[str] = []
+    context_matches: list[str] = []
+    for variant in variants:
+        normalized = _normalize(variant)
+        if not normalized:
+            continue
+        if normalized in direct_haystack:
+            direct_matches.append(variant)
+        elif normalized in context_haystack:
+            context_matches.append(variant)
+    return direct_matches, context_matches
+
+
+def _zone_alignment_score(interaction: dict[str, Any], item: dict[str, Any]) -> int:
+    zone_hint = _normalize(interaction.get("zone_hint"))
+    group_context = _normalize(interaction.get("group_context"))
+    haystack = _item_context_haystack(item)
+    score = 0
+
+    if zone_hint == "header-menu" and ("header-menu" in haystack or "menu-" in haystack):
+        score += 4
+    if zone_hint == "shortcut-tabs" and ("desktop-submenu" in haystack or "submenu" in haystack):
+        score += 4
+    if zone_hint == "faq-list" and ("lista-preguntas" in haystack or "preguntas-frecuentes" in haystack):
+        score += 4
+    if zone_hint == "card-grid" and any(token in haystack for token in ("card-footer", "btn-products", "swiper", " card ")):
+        score += 4
+
+    if group_context == "card_collection" and any(token in haystack for token in ("card", "swiper", "btn-products")):
+        score += 2
+    if group_context == "faq_collection" and any(token in haystack for token in ("preguntas", "faq")):
+        score += 2
+    if group_context == "top_navigation" and "header-menu" in haystack:
+        score += 2
+    if group_context == "shortcut_collection" and "submenu" in haystack:
+        score += 2
+
+    for token in _tokenize(interaction.get("ubicacion")):
+        if token and token in haystack:
+            score += 1
+
+    return score
+
+
+def _group_item_alignment(interaction: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    direct_haystack = _item_direct_haystack(item)
+    context_haystack = _item_context_haystack(item)
+    element_variants = _normalized_list(interaction.get("element_variants"))
+    title_variants = _normalized_list(interaction.get("title_variants"))
+    matched_element_direct, matched_element_context = _variant_matches(element_variants, direct_haystack, context_haystack)
+    matched_title_direct, matched_title_context = _variant_matches(title_variants, direct_haystack, context_haystack)
+    zone_score = _zone_alignment_score(interaction, item)
+
+    matched_variants = list(
+        dict.fromkeys(
+            [*matched_element_direct, *matched_element_context, *matched_title_direct, *matched_title_context]
+        )
+    )
+    score = (
+        len(matched_element_direct) * 45
+        + len(matched_element_context) * 20
+        + len(matched_title_direct) * 30
+        + len(matched_title_context) * 15
+        + zone_score * 12
+        + (5 if item.get("is_visible") else 0)
+    )
+    qualifies = bool(matched_variants or zone_score >= 3)
+
+    return {
+        "matched_variants": matched_variants,
+        "matched_element_direct": matched_element_direct,
+        "matched_element_context": matched_element_context,
+        "matched_title_direct": matched_title_direct,
+        "matched_title_context": matched_title_context,
+        "zone_score": zone_score,
+        "score": score,
+        "qualifies": qualifies,
+    }
+
+
+def _dedupe_items_by_node_id(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    unique: dict[str, dict[str, Any]] = {}
+    for item in items:
+        node_id = str(item.get("node_id") or "")
+        if not node_id:
+            continue
+        current = unique.get(node_id)
+        if current is None:
+            unique[node_id] = item
+            continue
+        current_visible = bool(current.get("is_visible"))
+        next_visible = bool(item.get("is_visible"))
+        if next_visible and not current_visible:
+            unique[node_id] = item
+    return list(unique.values())
+
+
+def _ancestor_selector_candidates(item: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for depth, ancestor in enumerate(item.get("ancestors") or [], start=1):
+        tag = str(ancestor.get("tag") or "").strip().lower()
+        if not tag:
+            continue
+        selector_options: list[tuple[str, int]] = []
+        ancestor_id = ancestor.get("id")
+        if ancestor_id:
+            selector_options.append((f"#{ancestor_id}", 100))
+        stable_classes = _stable_classes(ancestor.get("classes") or [])
+        if stable_classes:
+            selector_options.append((f"{tag}.{stable_classes[0]}", 35))
+            if len(stable_classes) > 1:
+                selector_options.append((f"{tag}.{stable_classes[0]}.{stable_classes[1]}", 45))
+        selector_options.append((tag, 5))
+
+        for selector, specificity in selector_options:
+            if selector in seen:
+                continue
+            seen.add(selector)
+            candidates.append(
+                {
+                    "selector": selector,
+                    "depth": depth,
+                    "specificity_score": specificity,
+                }
+            )
+    return candidates
+
+
+def _common_ancestor_selectors(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidate_maps = []
+    for item in items:
+        item_map = {candidate["selector"]: candidate for candidate in _ancestor_selector_candidates(item)}
+        if item_map:
+            candidate_maps.append(item_map)
+    if not candidate_maps:
+        return []
+
+    common = set(candidate_maps[0].keys())
+    for item_map in candidate_maps[1:]:
+        common &= set(item_map.keys())
+
+    results: list[dict[str, Any]] = []
+    for selector in common:
+        specificity_score = max(item_map[selector]["specificity_score"] for item_map in candidate_maps)
+        depth = min(item_map[selector]["depth"] for item_map in candidate_maps)
+        results.append(
+            {
+                "selector": selector,
+                "depth": depth,
+                "specificity_score": specificity_score,
+            }
+        )
+    return results
+
+
+def _group_item_selector_candidates(container_selector: str, items: list[dict[str, Any]]) -> list[str]:
+    tags = {str(item.get("tag") or "").strip().lower() for item in items if item.get("tag")}
+    tag = next(iter(tags), "")
+    if not tag:
+        return []
+
+    class_sets = []
+    for item in items:
+        stable_classes = set(_stable_classes(item.get("class_list") or []))
+        class_sets.append(stable_classes)
+    common_classes = set.intersection(*class_sets) if class_sets else set()
+
+    selectors: list[str] = []
+    ordered_common = sorted(common_classes)
+    if ordered_common:
+        selectors.append(f"{container_selector} {tag}.{ordered_common[0]}")
+        if len(ordered_common) > 1:
+            selectors.append(f"{container_selector} {tag}.{ordered_common[0]}.{ordered_common[1]}")
+    selectors.append(f"{container_selector} {tag}")
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for selector in selectors:
+        if selector in seen:
+            continue
+        seen.add(selector)
+        unique.append(selector)
+    return unique
+
+
+def _group_origin(items: list[dict[str, Any]], dom_snapshot: dict[str, Any]) -> str:
+    origins = {_candidate_origin(item, dom_snapshot) for item in items}
+    if origins == {SELECTOR_ORIGIN_RENDERED}:
+        return SELECTOR_ORIGIN_RENDERED
+    if SELECTOR_ORIGIN_FALLBACK in origins:
+        return SELECTOR_ORIGIN_FALLBACK
+    return SELECTOR_ORIGIN_REJECTED
+
+
+def _group_candidate_evidence(
+    *,
+    interaction: dict[str, Any],
+    matched_items: list[dict[str, Any]],
+    container_selector: str,
+    item_selector: str,
+    soups: dict[str, BeautifulSoup],
+    dom_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    unique_items = _dedupe_items_by_node_id(matched_items)
+    origin = _group_origin(unique_items, dom_snapshot)
+    item_selector_type = _selector_type(item_selector)
+    container_match_count, container_state = _selector_match_count(container_selector, soups)
+    item_match_count, item_state = _selector_match_count(item_selector, soups)
+    observed_state = item_state or container_state
+    soup = soups.get(observed_state) if observed_state else None
+
+    item_matches: list[Tag] = []
+    container_matches: list[Tag] = []
+    if soup is not None:
+        try:
+            item_matches = soup.select(item_selector)
+        except Exception:
+            item_matches = []
+        try:
+            container_matches = soup.select(container_selector)
+        except Exception:
+            container_matches = []
+
+    matched_node_ids = {
+        str(match.get(NODE_ID_ATTR))
+        for match in item_matches
+        if isinstance(match, Tag) and match.get(NODE_ID_ATTR)
+    }
+    covered_items = [item for item in unique_items if str(item.get("node_id")) in matched_node_ids]
+    matched_variants = list(
+        dict.fromkeys(
+            variant
+            for item in covered_items
+            for variant in (item.get("__group_alignment__") or {}).get("matched_variants", [])
+        )
+    )
+    average_zone_score = round(
+        (
+            sum(int((item.get("__group_alignment__") or {}).get("zone_score") or 0) for item in unique_items)
+            / len(unique_items)
+        ),
+        2,
+    ) if unique_items else 0.0
+
+    promotion_blockers: list[str] = []
+    if origin != SELECTOR_ORIGIN_RENDERED:
+        promotion_blockers.append("grupo no proviene de DOM renderizado verificado")
+    if container_match_count == 0:
+        promotion_blockers.append("selector de contenedor no existe en DOM observado")
+    if item_match_count == 0:
+        promotion_blockers.append("selector de item no existe en DOM observado")
+    if item_match_count < 2:
+        promotion_blockers.append("selector de item colapsa el grupo a menos de 2 matches")
+    if len(covered_items) < 2:
+        promotion_blockers.append("selector de item no cubre suficientes nodos candidatos del grupo")
+    if not covered_items:
+        promotion_blockers.append("selector de item no demuestra soporte real para event.target.closest")
+
+    can_promote = not promotion_blockers
+    score = (
+        len(matched_variants) * 60
+        + len(covered_items) * 25
+        + SELECTOR_TYPE_WEIGHTS.get(_selector_type(container_selector), 0)
+        + SELECTOR_TYPE_WEIGHTS.get(item_selector_type, 0)
+        + int(average_zone_score * 10)
+        + (10 if container_match_count >= 1 else 0)
+    )
+
+    return {
+        "selector": item_selector,
+        "selector_type": item_selector_type,
+        "selector_origin": origin,
+        "state": observed_state,
+        "match_count": item_match_count,
+        "container_match_count": container_match_count,
+        "selector_contenedor": container_selector,
+        "selector_item": item_selector,
+        "group_item_count": len(covered_items),
+        "candidate_group_item_count": len(unique_items),
+        "matched_variants": matched_variants,
+        "variant_coverage": len(matched_variants),
+        "average_zone_score": average_zone_score,
+        "visible_text": [item.get("text") for item in covered_items[:5]],
+        "context_text": [item.get("context_text") for item in covered_items[:3]],
+        "attributes": {
+            "tag": next((item.get("tag") for item in covered_items if item.get("tag")), None),
+            "node_ids": [item.get("node_id") for item in covered_items[:10]],
+        },
+        "alignment_score": len(matched_variants) * 50 + int(average_zone_score * 10),
+        "specificity_score": SELECTOR_TYPE_WEIGHTS.get(item_selector_type, 0),
+        "score": score,
+        "exists_in_dom": bool(item_matches),
+        "matches_candidate_node": len(covered_items) >= 2,
+        "closest_runtime_supported": len(covered_items) >= 2,
+        "click_grounded": len(covered_items) >= 2 and origin == SELECTOR_ORIGIN_RENDERED,
+        "promotion_blockers": promotion_blockers,
+        "can_promote": can_promote,
+        "outer_html_excerpt": [item.get("outer_html_excerpt") for item in covered_items[:3]],
+        "uniqueness_explanation": (
+            f"selector grupal con {item_match_count} matches"
+            if item_match_count
+            else "selector grupal sin matches"
+        ),
+    }
+
+
+def _select_single_interaction(
+    *,
+    interaction: dict[str, Any],
+    inventory: list[dict[str, Any]],
+    soups: dict[str, BeautifulSoup],
+    dom_snapshot: dict[str, Any],
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    traces: list[dict[str, Any]] = []
+    for item in inventory:
+        seen: set[str] = set()
+        for selector in item.get("selector_candidates") or []:
+            selector_text = str(selector)
+            if selector_text in seen:
+                continue
+            seen.add(selector_text)
+            traces.append(
+                _candidate_evidence(
+                    interaction=interaction,
+                    item=item,
+                    selector=selector_text,
+                    soups=soups,
+                    dom_snapshot=dom_snapshot,
+                )
+            )
+
+    traces = [trace for trace in traces if trace.get("exists_in_dom")]
+    traces.sort(
+        key=lambda trace: (
+            int(bool(trace.get("can_promote"))),
+            int(trace.get("alignment_score", 0)),
+            int(trace.get("specificity_score", 0)),
+            int(bool(trace.get("click_grounded"))),
+            -int(trace.get("match_count", 0)),
+        ),
+        reverse=True,
+    )
+    return (traces[0] if traces else None), traces
+
+
+def _select_group_interaction(
+    *,
+    interaction: dict[str, Any],
+    inventory: list[dict[str, Any]],
+    soups: dict[str, BeautifulSoup],
+    dom_snapshot: dict[str, Any],
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    aligned_items: list[dict[str, Any]] = []
+    for item in inventory:
+        alignment = _group_item_alignment(interaction, item)
+        if not alignment["qualifies"]:
+            continue
+        enriched = dict(item)
+        enriched["__group_alignment__"] = alignment
+        aligned_items.append(enriched)
+
+    unique_items = _dedupe_items_by_node_id(aligned_items)
+    if len(unique_items) < 2:
+        return None, []
+
+    ancestor_candidates = _common_ancestor_selectors(unique_items)
+    traces: list[dict[str, Any]] = []
+    for ancestor in ancestor_candidates:
+        container_selector = ancestor["selector"]
+        for item_selector in _group_item_selector_candidates(container_selector, unique_items):
+            traces.append(
+                _group_candidate_evidence(
+                    interaction=interaction,
+                    matched_items=unique_items,
+                    container_selector=container_selector,
+                    item_selector=item_selector,
+                    soups=soups,
+                    dom_snapshot=dom_snapshot,
+                )
+            )
+
+    traces.sort(
+        key=lambda trace: (
+            int(bool(trace.get("can_promote"))),
+            int(trace.get("variant_coverage", 0)),
+            int(trace.get("group_item_count", 0)),
+            int(trace.get("specificity_score", 0)),
+            int(trace.get("score", 0)),
+        ),
+        reverse=True,
+    )
+    return (traces[0] if traces else None), traces
+
+
 def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, Any]) -> dict[str, Any]:
     state_html = dom_snapshot.get("state_html") or {}
     soups = {state: BeautifulSoup(html, "lxml") for state, html in state_html.items()}
@@ -332,6 +801,8 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
         selector_evidence = []
         for idx, interaction in enumerate(measurement_case.get("interacciones", []), start=1):
             interaction["selector_candidato"] = None
+            interaction["selector_contenedor"] = None
+            interaction["selector_item"] = None
             interaction["selector_activador"] = None
             interaction["match_count"] = 0
             interaction.setdefault("warnings", []).append(
@@ -363,40 +834,27 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
 
     for index, interaction in enumerate(measurement_case.get("interacciones", []), start=1):
         interaction.setdefault("warnings", [])
-        traces: list[dict[str, Any]] = []
+        interaction_mode = str(interaction.get("interaction_mode") or "single").lower()
 
-        for item in inventory:
-            seen: set[str] = set()
-            for selector in item.get("selector_candidates") or []:
-                selector_text = str(selector)
-                if selector_text in seen:
-                    continue
-                seen.add(selector_text)
-                traces.append(
-                    _candidate_evidence(
-                        interaction=interaction,
-                        item=item,
-                        selector=selector_text,
-                        soups=soups,
-                        dom_snapshot=dom_snapshot,
-                    )
-                )
+        if interaction_mode == "group":
+            chosen, traces = _select_group_interaction(
+                interaction=interaction,
+                inventory=inventory,
+                soups=soups,
+                dom_snapshot=dom_snapshot,
+            )
+        else:
+            chosen, traces = _select_single_interaction(
+                interaction=interaction,
+                inventory=inventory,
+                soups=soups,
+                dom_snapshot=dom_snapshot,
+            )
 
-        traces = [trace for trace in traces if trace.get("exists_in_dom")]
-        traces.sort(
-            key=lambda trace: (
-                int(bool(trace.get("can_promote"))),
-                int(trace.get("alignment_score", 0)),
-                int(trace.get("specificity_score", 0)),
-                int(bool(trace.get("click_grounded"))),
-                -int(trace.get("match_count", 0)),
-            ),
-            reverse=True,
-        )
-
-        chosen = traces[0] if traces else None
         if not chosen:
             interaction["selector_candidato"] = None
+            interaction["selector_contenedor"] = None
+            interaction["selector_item"] = None
             interaction["selector_activador"] = None
             interaction["match_count"] = 0
             interaction["warnings"].append(
@@ -409,9 +867,9 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
                     "selector_origin": SELECTOR_ORIGIN_REJECTED,
                     "human_review_required": True,
                     "promoted": False,
-                    "rejection_reason": "no hay candidatos con existencia en DOM y alineación mínima",
+                    "rejection_reason": "no hay candidatos con existencia en DOM y alineación suficiente",
                     "candidates_considered": len(traces),
-                    "candidates": [],
+                    "candidates": traces[:10],
                 }
             )
             continue
@@ -421,16 +879,20 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
         if promoted:
             selector = str(chosen["selector"])
             interaction["selector_candidato"] = selector
+            interaction["selector_contenedor"] = chosen.get("selector_contenedor")
+            interaction["selector_item"] = chosen.get("selector_item") or selector
             interaction["selector_activador"] = f"{selector}, {selector} *"
         else:
             interaction["selector_candidato"] = None
+            interaction["selector_contenedor"] = None
+            interaction["selector_item"] = None
             interaction["selector_activador"] = None
 
         if chosen["selector_origin"] == SELECTOR_ORIGIN_FALLBACK:
             interaction["warnings"].append(
                 "Selector observado solo en raw_html_fallback: no se autopromueve y requiere revisión humana."
             )
-        if not chosen.get("has_minimum_alignment", False):
+        if not chosen.get("has_minimum_alignment", True) and interaction_mode != "group":
             interaction["warnings"].append(
                 "La evidencia textual/atributiva del nodo es insuficiente para autopromover selector."
             )
@@ -438,13 +900,19 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
             interaction["warnings"].append(
                 "Selector retenido por seguridad: " + "; ".join(chosen["promotion_blockers"])
             )
+        if interaction_mode == "group" and promoted:
+            interaction["warnings"].append(
+                f"Interacción grupal modelada con selector_contenedor={chosen.get('selector_contenedor')} y selector_item={chosen.get('selector_item')}."
+            )
 
         selector_evidence.append(
             {
                 "index": index,
                 "selector": chosen.get("selector") if promoted else None,
                 "selector_origin": chosen.get("selector_origin") or SELECTOR_ORIGIN_REJECTED,
-                "human_review_required": (not promoted) or chosen.get("match_count") != 1,
+                "human_review_required": (not promoted) or (
+                    interaction_mode == "single" and chosen.get("match_count") != 1
+                ),
                 "promoted": promoted,
                 "rejection_reason": None if promoted else "; ".join(chosen.get("promotion_blockers") or []),
                 "chosen": chosen,

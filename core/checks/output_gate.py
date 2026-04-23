@@ -34,13 +34,14 @@ def evaluate_selector_grounding(
         selector = interaction.get("selector_candidato")
         evidence = evidence_by_index.get(idx, {})
         chosen = evidence.get("chosen") or {}
+        interaction_mode = str(interaction.get("interaction_mode") or "single").lower()
 
         if selector is None:
             continue
         if evidence.get("selector_origin") != SELECTOR_ORIGIN_RENDERED:
             errors.append(f"interaction[{idx}] selector no proviene de observed_rendered_dom: {selector}")
             continue
-        if selector not in observed_rendered_selectors:
+        if interaction_mode == "single" and selector not in observed_rendered_selectors:
             errors.append(f"interaction[{idx}] selector no aparece en clickable inventory renderizado: {selector}")
         if not chosen.get("matches_candidate_node"):
             errors.append(f"interaction[{idx}] selector no matchea el nodo candidato observado: {selector}")
@@ -48,8 +49,12 @@ def evaluate_selector_grounding(
             errors.append(f"interaction[{idx}] selector no soporta event.target.closest: {selector}")
         if not chosen.get("click_grounded"):
             errors.append(f"interaction[{idx}] selector no queda click_grounded: {selector}")
-        if int(interaction.get("match_count") or 0) != 1:
+        if interaction_mode == "single" and int(interaction.get("match_count") or 0) != 1:
             errors.append(f"interaction[{idx}] selector no es único en validación final: {selector}")
+        if interaction_mode == "group" and int(interaction.get("match_count") or 0) < 2:
+            errors.append(f"interaction[{idx}] selector grupal no cubre múltiples items: {selector}")
+        if interaction_mode == "group" and not interaction.get("selector_item"):
+            errors.append(f"interaction[{idx}] falta selector_item para interacción grupal.")
 
     if not observed_rendered_selectors:
         warnings.append("No hay selectores observados en DOM renderizado dentro del clickable inventory.")
@@ -88,8 +93,13 @@ def evaluate_output_gate(
     tag_clean = tag_template.strip()
     if not tag_clean:
         errors.append("tag_template.js quedó vacío.")
-    if "e.closest('" not in tag_clean and 'e.closest("' not in tag_clean:
-        errors.append("tag_template.js no contiene reglas útiles basadas en e.closest(...).")
+    if (
+        "e.closest('" not in tag_clean
+        and 'e.closest("' not in tag_clean
+        and ".closest(" not in tag_clean
+        and "resolveGroupNode(" not in tag_clean
+    ):
+        errors.append("tag_template.js no contiene reglas útiles basadas en closest(...).")
     if "No interaction rules available for this case." in tag_clean:
         errors.append("tag_template.js quedó sin reglas útiles.")
 

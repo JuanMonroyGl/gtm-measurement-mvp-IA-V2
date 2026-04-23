@@ -14,6 +14,7 @@ def _incomplete_fields(interaction: dict[str, Any]) -> list[str]:
         "seccion",
         "flujo",
         "elemento",
+        "interaction_mode",
         "ubicacion",
         "plan_url",
         "target_url",
@@ -108,11 +109,19 @@ def render_report(
 
     for idx, interaction in enumerate(measurement_case.get("interacciones", []), start=1):
         lines.append(f"- [{idx}] tipo_evento: {interaction.get('tipo_evento')}")
+        lines.append(f"  - interaction_mode: {interaction.get('interaction_mode')}")
         lines.append(f"  - flujo: {interaction.get('flujo')}")
         lines.append(f"  - elemento: {interaction.get('elemento')}")
+        lines.append(f"  - element_variants: {interaction.get('element_variants')}")
+        lines.append(f"  - title_variants: {interaction.get('title_variants')}")
+        lines.append(f"  - group_context: {interaction.get('group_context')}")
+        lines.append(f"  - zone_hint: {interaction.get('zone_hint')}")
+        lines.append(f"  - value_extraction_strategy: {interaction.get('value_extraction_strategy')}")
         lines.append(f"  - ubicacion: {interaction.get('ubicacion')}")
         lines.append(f"  - texto_referencia: {interaction.get('texto_referencia')}")
         lines.append(f"  - selector_candidato: {interaction.get('selector_candidato')}")
+        lines.append(f"  - selector_contenedor: {interaction.get('selector_contenedor')}")
+        lines.append(f"  - selector_item: {interaction.get('selector_item')}")
         lines.append(f"  - selector_activador: {interaction.get('selector_activador')}")
         lines.append(f"  - match_count: {interaction.get('match_count')}")
         lines.append(f"  - confidence: {interaction.get('confidence')}")
@@ -130,14 +139,24 @@ def render_report(
                 lines.append(f"  - chosen_selector_origin: {chosen.get('selector_origin')}")
                 lines.append(f"  - selector_type: {chosen.get('selector_type')}")
                 lines.append(f"  - dom_state: {chosen.get('state')}")
+                if chosen.get("selector_contenedor"):
+                    lines.append(f"  - chosen_selector_contenedor: {chosen.get('selector_contenedor')}")
+                if chosen.get("selector_item"):
+                    lines.append(f"  - chosen_selector_item: {chosen.get('selector_item')}")
                 lines.append(f"  - exists_in_dom: {chosen.get('exists_in_dom')}")
                 lines.append(f"  - matches_candidate_node: {chosen.get('matches_candidate_node')}")
                 lines.append(f"  - closest_runtime_supported: {chosen.get('closest_runtime_supported')}")
                 lines.append(f"  - click_grounded: {chosen.get('click_grounded')}")
                 lines.append(f"  - alignment_score: {chosen.get('alignment_score')}")
                 lines.append(f"  - specificity_score: {chosen.get('specificity_score')}")
+                if chosen.get("variant_coverage") is not None:
+                    lines.append(f"  - variant_coverage: {chosen.get('variant_coverage')}")
+                if chosen.get("group_item_count") is not None:
+                    lines.append(f"  - group_item_count: {chosen.get('group_item_count')}")
                 lines.append(f"  - matched_direct_tokens: {chosen.get('matched_direct_tokens')}")
                 lines.append(f"  - matched_context_tokens: {chosen.get('matched_context_tokens')}")
+                if chosen.get("matched_variants") is not None:
+                    lines.append(f"  - matched_variants: {chosen.get('matched_variants')}")
                 lines.append(f"  - promotion_blockers: {chosen.get('promotion_blockers')}")
                 lines.append(f"  - outer_html_excerpt: {chosen.get('outer_html_excerpt')}")
 
@@ -153,6 +172,8 @@ def render_report(
             "",
             "## Métricas agregadas del caso",
             f"- total_interactions: {case_metrics.get('total_interactions')}",
+            f"- single_interactions: {case_metrics.get('single_interactions')}",
+            f"- group_interactions: {case_metrics.get('group_interactions')}",
             f"- interactions_with_selector: {case_metrics.get('interactions_with_selector')}",
             f"- null_selectors: {case_metrics.get('null_selectors')}",
             f"- match_count_0: {case_metrics.get('match_count_0')}",

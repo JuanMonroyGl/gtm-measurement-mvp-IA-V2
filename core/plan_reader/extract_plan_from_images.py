@@ -25,6 +25,19 @@ except Exception as exc:  # optional dependency at runtime
 
 
 EVENT_TYPES = {"clic boton", "clic card", "clic link", "clic tap"}
+FIELD_LABELS = [
+    "evento",
+    "activo",
+    "seccion",
+    "flujo",
+    "elemento",
+    "titulo card",
+    "ubicacion",
+    "ej",
+]
+FIELD_PATTERN = re.compile(
+    rf"(?im)^(?P<label>{'|'.join(re.escape(label) for label in FIELD_LABELS)})\s*:\s*"
+)
 
 
 @dataclass
@@ -112,11 +125,68 @@ def _extract_urls(text: str) -> list[str]:
 
 
 def _find_field(text: str, field_name: str) -> str | None:
-    pattern = re.compile(rf"{field_name}\s*:\s*(.+?)(?:\n|$)", flags=re.IGNORECASE)
-    match = pattern.search(text)
+    normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
+    matches = list(FIELD_PATTERN.finditer(normalized_text))
+    for idx, match in enumerate(matches):
+        label = _normalize_space(match.group("label")).lower()
+        if label != field_name.lower():
+            continue
+        start = match.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(normalized_text)
+        value = normalized_text[start:end]
+        value = re.split(r"\nhttps?://\S+", value, maxsplit=1, flags=re.IGNORECASE)[0]
+        value = re.sub(r"\n{2,}", "\n", value)
+        return _normalize_space(value)
+    return None
+
+
+def _extract_variants(raw_value: str | None) -> list[str]:
+    if not raw_value:
+        return []
+    match = re.search(r"\{\{(?P<content>.+?)\}\}", raw_value, flags=re.DOTALL)
     if not match:
-        return None
-    return _normalize_space(match.group(1))
+        return []
+    variants = []
+    for part in match.group("content").split("|"):
+        cleaned = _normalize_space(part)
+        if cleaned:
+            variants.append(cleaned)
+    return variants
+
+
+def _stringify_variants(raw_value: str | None, variants: list[str]) -> str | None:
+    if variants:
+        return " | ".join(variants)
+    return _normalize_space(raw_value)
+
+
+def _derive_group_context(tipo_evento: str | None, ubicacion: str | None) -> tuple[str | None, str | None]:
+    event = _normalize_space(tipo_evento or "").lower()
+    location = _normalize_space(ubicacion or "").lower()
+
+    if "barra arriba" in location or "menu" in event:
+        return "top_navigation", "header-menu"
+    if "lo mas consultado" in location:
+        return "faq_collection", "faq-list"
+    if "card" in event:
+        return "card_collection", "card-grid"
+    if "tab" in location or "tab" in event:
+        return "shortcut_collection", "shortcut-tabs"
+    return None, None
+
+
+def _derive_value_strategy(
+    *,
+    interaction_mode: str,
+    tipo_evento: str | None,
+    title_variants: list[str],
+) -> str:
+    event = _normalize_space(tipo_evento or "").lower()
+    if interaction_mode == "group" and ("card" in event or title_variants):
+        return "prefer_title_variant_then_click_text"
+    if interaction_mode == "group":
+        return "match_element_variant_from_clicked_text"
+    return "click_text"
 
 
 def _safe_event_type(raw_value: str | None) -> str | None:
@@ -139,8 +209,13 @@ def _parse_interaction_from_text(evidence_text: str, image_path: Path) -> dict[s
     activo = _find_field(evidence_text, "activo")
     seccion = _find_field(evidence_text, "seccion")
     flujo = _find_field(evidence_text, "flujo")
-    elemento = _find_field(evidence_text, "elemento")
+    raw_elemento = _find_field(evidence_text, "elemento")
+    raw_titulo_card = _find_field(evidence_text, "titulo card")
     ubicacion = _find_field(evidence_text, "ubicacion")
+    element_variants = _extract_variants(raw_elemento)
+    title_variants = _extract_variants(raw_titulo_card)
+    interaction_mode = "group" if len(element_variants) > 1 or len(title_variants) > 1 else "single"
+    group_context, zone_hint = _derive_group_context(tipo_evento, ubicacion)
 
     # Prefer explicit example-like textual reference when available.
     texto_referencia = _find_field(evidence_text, "ej")
@@ -150,15 +225,28 @@ def _parse_interaction_from_text(evidence_text: str, image_path: Path) -> dict[s
         "activo": activo,
         "seccion": seccion,
         "flujo": flujo,
-        "elemento": elemento,
+        "elemento": _stringify_variants(raw_elemento, element_variants),
+        "titulo_card": _stringify_variants(raw_titulo_card, title_variants),
         "ubicacion": ubicacion,
         "texto_referencia": texto_referencia,
+        "interaction_mode": interaction_mode,
+        "element_variants": element_variants,
+        "title_variants": title_variants,
+        "group_context": group_context,
+        "zone_hint": zone_hint,
+        "value_extraction_strategy": _derive_value_strategy(
+            interaction_mode=interaction_mode,
+            tipo_evento=tipo_evento,
+            title_variants=title_variants,
+        ),
     }
 
     warnings: list[str] = []
     for key in ["tipo_evento", "flujo", "elemento", "ubicacion"]:
         if not fields.get(key):
             warnings.append(f"Campo no inferido desde imagen: {key}")
+    if interaction_mode == "group" and not element_variants and not title_variants:
+        warnings.append("Interacción marcada como group sin variantes estructuradas detectadas.")
 
     return {
         "source_image": str(image_path),

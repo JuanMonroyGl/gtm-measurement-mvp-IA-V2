@@ -36,9 +36,12 @@ def validate_selector_candidates(
         evidence = evidence_by_index.get(idx, {})
         chosen = evidence.get("chosen") or {}
         interaction.setdefault("warnings", [])
+        interaction_mode = str(interaction.get("interaction_mode") or "single").lower()
 
         if evidence.get("selector_origin") != SELECTOR_ORIGIN_RENDERED or not evidence.get("promoted"):
             interaction["selector_candidato"] = None
+            interaction["selector_contenedor"] = None
+            interaction["selector_item"] = None
             interaction["selector_activador"] = None
             interaction["match_count"] = int(chosen.get("match_count") or 0)
             interaction["warnings"].append(
@@ -51,6 +54,8 @@ def validate_selector_candidates(
 
         if not chosen.get("exists_in_dom"):
             interaction["selector_candidato"] = None
+            interaction["selector_contenedor"] = None
+            interaction["selector_item"] = None
             interaction["selector_activador"] = None
             interaction["warnings"].append(
                 "Selector no existe en los estados renderizados validados; se deja null."
@@ -58,6 +63,8 @@ def validate_selector_candidates(
             continue
         if not chosen.get("matches_candidate_node"):
             interaction["selector_candidato"] = None
+            interaction["selector_contenedor"] = None
+            interaction["selector_item"] = None
             interaction["selector_activador"] = None
             interaction["warnings"].append(
                 "Selector existe en DOM pero no selecciona el nodo candidato observado; se deja null."
@@ -65,6 +72,8 @@ def validate_selector_candidates(
             continue
         if not chosen.get("closest_runtime_supported"):
             interaction["selector_candidato"] = None
+            interaction["selector_contenedor"] = None
+            interaction["selector_item"] = None
             interaction["selector_activador"] = None
             interaction["warnings"].append(
                 "Selector no demuestra soporte real para event.target.closest(selector); se deja null."
@@ -72,16 +81,29 @@ def validate_selector_candidates(
             continue
         if not chosen.get("click_grounded"):
             interaction["selector_candidato"] = None
+            interaction["selector_contenedor"] = None
+            interaction["selector_item"] = None
             interaction["selector_activador"] = None
             interaction["warnings"].append(
                 "Selector no queda click_grounded después de validar runtime flags; se deja null."
             )
             continue
-        if interaction.get("match_count") != 1:
+        if interaction_mode == "single" and interaction.get("match_count") != 1:
             interaction["selector_candidato"] = None
+            interaction["selector_contenedor"] = None
+            interaction["selector_item"] = None
             interaction["selector_activador"] = None
             interaction["warnings"].append(
                 f"Selector renderizado pero ambiguo ({interaction['match_count']} matches); se deja null."
+            )
+            continue
+        if interaction_mode == "group" and int(interaction.get("match_count") or 0) < 2:
+            interaction["selector_candidato"] = None
+            interaction["selector_contenedor"] = None
+            interaction["selector_item"] = None
+            interaction["selector_activador"] = None
+            interaction["warnings"].append(
+                "Selector grupal renderizado pero cubre menos de 2 items; se deja null."
             )
             continue
 

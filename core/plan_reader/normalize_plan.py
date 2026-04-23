@@ -13,12 +13,20 @@ INTERACTION_FIELDS = [
     "seccion",
     "flujo",
     "elemento",
+    "interaction_mode",
+    "element_variants",
+    "title_variants",
+    "group_context",
+    "zone_hint",
+    "value_extraction_strategy",
     "ubicacion",
     "plan_url",
     "target_url",
     "page_path_regex",
     "texto_referencia",
     "selector_candidato",
+    "selector_contenedor",
+    "selector_item",
     "selector_activador",
     "match_count",
     "confidence",
@@ -46,6 +54,83 @@ def _normalize_text_value(value: str | None) -> str | None:
     cleaned = re.sub(r"\s+", " ", value).strip()
     cleaned = cleaned.rstrip(".,;:")
     return cleaned or None
+
+
+def _normalize_list_value(value: Any) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    normalized = []
+    for item in value:
+        cleaned = _normalize_text_value(str(item) if item is not None else None)
+        if cleaned:
+            normalized.append(cleaned)
+    return normalized or None
+
+
+def _slug_hint(*parts: str | None) -> str | None:
+    values = [_normalize_text_value(part) for part in parts if part]
+    if not values:
+        return None
+    slug = "_".join(
+        filter(
+            None,
+            re.split(r"[^a-z0-9]+", re.sub(r"\s+", "_", " ".join(values).lower())),
+        )
+    )
+    return slug or None
+
+
+def _derive_group_defaults(
+    *,
+    interaction_mode: str | None,
+    tipo_evento: str | None,
+    ubicacion: str | None,
+    title_variants: list[str] | None,
+    current_group_context: str | None,
+    current_zone_hint: str | None,
+    current_strategy: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    if interaction_mode != "group":
+        return current_group_context, current_zone_hint, current_strategy or "click_text"
+
+    event = (tipo_evento or "").strip().lower()
+    location = (ubicacion or "").strip().lower()
+
+    group_context = current_group_context
+    zone_hint = current_zone_hint
+    strategy = current_strategy
+
+    if not group_context:
+        if "menu" in event or "barra arriba" in location:
+            group_context = "top_navigation"
+        elif "card" in event:
+            group_context = "card_collection"
+        elif "lo mas consultado" in location:
+            group_context = "faq_collection"
+        elif "tab" in event or "tab" in location:
+            group_context = "shortcut_collection"
+        else:
+            group_context = _slug_hint(tipo_evento, ubicacion)
+
+    if not zone_hint:
+        if group_context == "top_navigation":
+            zone_hint = "header-menu"
+        elif group_context == "card_collection":
+            zone_hint = "card-grid"
+        elif group_context == "faq_collection":
+            zone_hint = "faq-list"
+        elif group_context == "shortcut_collection":
+            zone_hint = "shortcut-tabs"
+        else:
+            zone_hint = _slug_hint(ubicacion)
+
+    if not strategy:
+        if "card" in event or title_variants:
+            strategy = "prefer_title_variant_then_click_text"
+        else:
+            strategy = "match_element_variant_from_clicked_text"
+
+    return group_context, zone_hint, strategy
 
 
 def _derive_top_level_section(*, target_url: str | None, plan_url: str | None) -> str | None:
@@ -86,18 +171,41 @@ def _normalize_metadata_interaction(
     warnings = list(entry.get("warnings") or [])
     warnings.append("Interacción completada desde metadata por falta de extracción confiable en imágenes.")
 
+    element_variants = _normalize_list_value(entry.get("element_variants"))
+    title_variants = _normalize_list_value(entry.get("title_variants"))
+    interaction_mode = _normalize_text_value(entry.get("interaction_mode"))
+    if not interaction_mode:
+        interaction_mode = "group" if (element_variants and len(element_variants) > 1) or (title_variants and len(title_variants) > 1) else "single"
+    group_context, zone_hint, value_strategy = _derive_group_defaults(
+        interaction_mode=interaction_mode,
+        tipo_evento=_normalize_text_value(entry.get("tipo_evento") or entry.get("evento")),
+        ubicacion=_normalize_text_value(entry.get("ubicacion")),
+        title_variants=title_variants,
+        current_group_context=_normalize_text_value(entry.get("group_context")),
+        current_zone_hint=_normalize_text_value(entry.get("zone_hint")),
+        current_strategy=_normalize_text_value(entry.get("value_extraction_strategy")),
+    )
+
     return {
         "tipo_evento": _normalize_text_value(entry.get("tipo_evento") or entry.get("evento")),
         "activo": _normalize_text_value(entry.get("activo")) or metadata_activo,
         "seccion": _normalize_text_value(entry.get("seccion")) or metadata_seccion,
         "flujo": _normalize_text_value(entry.get("flujo")),
         "elemento": _normalize_text_value(entry.get("elemento")),
+        "interaction_mode": interaction_mode,
+        "element_variants": element_variants,
+        "title_variants": title_variants,
+        "group_context": group_context,
+        "zone_hint": zone_hint,
+        "value_extraction_strategy": value_strategy,
         "ubicacion": _normalize_text_value(entry.get("ubicacion")),
         "plan_url": _normalize_text_value(entry.get("plan_url")) or metadata_plan_url,
         "target_url": _normalize_text_value(entry.get("target_url")) or metadata_target_url,
         "page_path_regex": _normalize_text_value(entry.get("page_path_regex")) or metadata_page_path_regex,
         "texto_referencia": _normalize_text_value(entry.get("texto_referencia")),
         "selector_candidato": _normalize_text_value(entry.get("selector_candidato")),
+        "selector_contenedor": _normalize_text_value(entry.get("selector_contenedor")),
+        "selector_item": _normalize_text_value(entry.get("selector_item")),
         "selector_activador": _normalize_text_value(entry.get("selector_activador")),
         "match_count": entry.get("match_count"),
         "confidence": entry.get("confidence"),
@@ -139,6 +247,20 @@ def normalize_case(metadata: dict[str, Any], parsed_plan: dict[str, Any]) -> dic
             metadata_plan_url,
         )
         image_plan_url = (raw.get("plan_url_candidates") or [None])[0]
+        element_variants = _normalize_list_value(fields.get("element_variants"))
+        title_variants = _normalize_list_value(fields.get("title_variants"))
+        interaction_mode = _normalize_text_value(fields.get("interaction_mode"))
+        if not interaction_mode:
+            interaction_mode = "group" if (element_variants and len(element_variants) > 1) or (title_variants and len(title_variants) > 1) else "single"
+        group_context, zone_hint, value_strategy = _derive_group_defaults(
+            interaction_mode=interaction_mode,
+            tipo_evento=_normalize_text_value(fields.get("tipo_evento")),
+            ubicacion=_normalize_text_value(fields.get("ubicacion")),
+            title_variants=title_variants,
+            current_group_context=_normalize_text_value(fields.get("group_context")),
+            current_zone_hint=_normalize_text_value(fields.get("zone_hint")),
+            current_strategy=_normalize_text_value(fields.get("value_extraction_strategy")),
+        )
 
         warnings = list(raw.get("warnings", []))
 
@@ -162,12 +284,20 @@ def normalize_case(metadata: dict[str, Any], parsed_plan: dict[str, Any]) -> dic
                 "seccion": final_seccion,
                 "flujo": _normalize_text_value(fields.get("flujo")),
                 "elemento": _normalize_text_value(fields.get("elemento")),
+                "interaction_mode": interaction_mode,
+                "element_variants": element_variants,
+                "title_variants": title_variants,
+                "group_context": group_context,
+                "zone_hint": zone_hint,
+                "value_extraction_strategy": value_strategy,
                 "ubicacion": _normalize_text_value(fields.get("ubicacion")),
                 "plan_url": selected_plan_url,
                 "target_url": metadata_target_url,
                 "page_path_regex": metadata_page_path_regex,
                 "texto_referencia": _normalize_text_value(fields.get("texto_referencia")),
                 "selector_candidato": None,
+                "selector_contenedor": None,
+                "selector_item": None,
                 "selector_activador": None,
                 "match_count": None,
                 "confidence": raw.get("confidence"),
