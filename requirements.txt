@@ -4,3 +4,4 @@ opencv-python==4.13.0.92
 beautifulsoup4==4.12.3
 lxml==5.2.2
 jsonschema==4.23.0
+pypdfium2==4.30.0
