@@ -5,8 +5,17 @@ from __future__ import annotations
 from typing import Any
 
 from core.processing.selectors.build_selectors import SELECTOR_ORIGIN_RENDERED
+from core.processing.selectors.safety import (
+    container_match_limit,
+    group_match_limit,
+    is_unsafe_group_selector,
+)
 
 DEFAULT_TRIGGER_SELECTOR = "/* stub trigger selector: pending implementation */"
+
+
+def _trigger_parts(trigger_selector: str) -> list[str]:
+    return [part.strip() for part in str(trigger_selector or "").split(",") if part.strip()]
 
 
 def evaluate_selector_grounding(
@@ -56,6 +65,28 @@ def evaluate_selector_grounding(
         if interaction_mode == "group" and not interaction.get("selector_item"):
             errors.append(f"interaction[{idx}] falta selector_item para interacción grupal.")
 
+        if interaction_mode == "group":
+            expected_variants = list(interaction.get("element_variants") or []) + list(
+                interaction.get("title_variants") or []
+            )
+            match_limit = group_match_limit(len(expected_variants), chosen.get("candidate_group_item_count"))
+            if is_unsafe_group_selector(interaction.get("selector_item")):
+                errors.append(f"interaction[{idx}] selector_item grupal demasiado amplio: {interaction.get('selector_item')}")
+            if is_unsafe_group_selector(interaction.get("selector_contenedor")):
+                errors.append(
+                    f"interaction[{idx}] selector_contenedor grupal demasiado amplio: {interaction.get('selector_contenedor')}"
+                )
+            if int(chosen.get("variant_coverage") or 0) <= 0:
+                errors.append(f"interaction[{idx}] selector grupal promovido con variant_coverage=0: {selector}")
+            if int(interaction.get("match_count") or 0) > match_limit:
+                errors.append(
+                    f"interaction[{idx}] selector grupal promovido con match_count excesivo ({interaction.get('match_count')}): {selector}"
+                )
+            if int(chosen.get("container_match_count") or 0) > container_match_limit():
+                errors.append(
+                    f"interaction[{idx}] selector grupal promovido con container_match_count excesivo ({chosen.get('container_match_count')}): {selector}"
+                )
+
     if not observed_rendered_selectors:
         warnings.append("No hay selectores observados en DOM renderizado dentro del clickable inventory.")
 
@@ -90,6 +121,12 @@ def evaluate_output_gate(
     if not trigger_clean or trigger_clean == DEFAULT_TRIGGER_SELECTOR:
         errors.append("trigger_selector.txt quedó vacío o en stub.")
 
+    for selector in _trigger_parts(trigger_selector):
+        if selector.endswith(" *"):
+            selector = selector[:-2].strip()
+        if is_unsafe_group_selector(selector):
+            errors.append(f"trigger_selector.txt contiene selector genÃ©rico/no discriminante: {selector}")
+
     tag_clean = tag_template.strip()
     if not tag_clean:
         errors.append("tag_template.js quedó vacío.")
@@ -102,6 +139,13 @@ def evaluate_output_gate(
         errors.append("tag_template.js no contiene reglas útiles basadas en closest(...).")
     if "No interaction rules available for this case." in tag_clean:
         errors.append("tag_template.js quedó sin reglas útiles.")
+
+    for unsafe in ("div div", "div a", "div", "a", "body", "main", "section", "*"):
+        if f"resolveGroupNode(e, \"{unsafe}\"" in tag_clean or f"resolveGroupNode(e, '{unsafe}'" in tag_clean:
+            errors.append(f"tag_template.js genera resolveGroupNode con selector genÃ©rico: {unsafe}")
+
+        if f", \"{unsafe}\")" in tag_clean or f", '{unsafe}')" in tag_clean:
+            errors.append(f"tag_template.js genera resolveGroupNode con contenedor generico: {unsafe}")
 
     grounding = evaluate_selector_grounding(measurement_case, selector_trace, clickable_inventory)
     errors.extend(grounding["errors"])

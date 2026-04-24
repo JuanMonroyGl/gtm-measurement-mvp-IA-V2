@@ -8,6 +8,14 @@ from typing import Any
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
+from core.processing.selectors.safety import (
+    container_match_limit,
+    group_match_limit,
+    is_unsafe_group_selector,
+    selector_safety_blockers,
+    useful_visible_text,
+)
+
 NODE_ID_ATTR = "data-gtm-mvp-node-id"
 SELECTOR_ORIGIN_RENDERED = "observed_rendered_dom"
 SELECTOR_ORIGIN_FALLBACK = "raw_html_fallback"
@@ -114,6 +122,17 @@ def _selector_type(selector: str) -> str:
     if "." in selector:
         return "class"
     return "tag"
+
+
+def _expected_group_variants(interaction: dict[str, Any]) -> list[str]:
+    return list(
+        dict.fromkeys(
+            [
+                *_normalized_list(interaction.get("element_variants")),
+                *_normalized_list(interaction.get("title_variants")),
+            ]
+        )
+    )
 
 
 def _selector_match_count(selector: str, soups: dict[str, BeautifulSoup]) -> tuple[int, str | None]:
@@ -462,7 +481,7 @@ def _group_item_alignment(interaction: dict[str, Any], item: dict[str, Any]) -> 
         + zone_score * 12
         + (5 if item.get("is_visible") else 0)
     )
-    qualifies = bool(matched_variants or zone_score >= 3)
+    qualifies = bool(matched_variants)
 
     return {
         "matched_variants": matched_variants,
@@ -474,6 +493,80 @@ def _group_item_alignment(interaction: dict[str, Any], item: dict[str, Any]) -> 
         "score": score,
         "qualifies": qualifies,
     }
+
+
+def _item_role(item: dict[str, Any]) -> str:
+    outer_html = str(item.get("outer_html_excerpt") or "")
+    match = re.search(r"\brole=[\"']([^\"']+)[\"']", outer_html, flags=re.IGNORECASE)
+    return _normalize(match.group(1)) if match else ""
+
+
+def _allowed_group_click_target(interaction: dict[str, Any], item: dict[str, Any]) -> bool:
+    tag = str(item.get("tag") or "").strip().lower()
+    role = _item_role(item)
+    group_context = _normalize(interaction.get("group_context"))
+    if group_context in {"top_navigation", "menu"}:
+        return tag in {"a", "button"}
+    if group_context == "shortcut_collection":
+        return tag in {"a", "button"} or role == "tab"
+    if group_context == "faq_collection":
+        return tag == "a"
+    if group_context == "card_collection":
+        return tag in {"a", "button"}
+    return tag in {"a", "button"} or role in {"button", "tab"}
+
+
+def _alignment_allowed_for_group_context(interaction: dict[str, Any], item: dict[str, Any], alignment: dict[str, Any]) -> bool:
+    group_context = _normalize(interaction.get("group_context"))
+    if group_context in {"top_navigation", "menu", "shortcut_collection"}:
+        return bool(alignment.get("matched_element_direct"))
+    if group_context == "faq_collection":
+        return bool(alignment.get("matched_element_direct")) and "/preguntas-frecuentes" in str(item.get("href") or "")
+    if group_context == "card_collection":
+        return bool(
+            alignment.get("matched_element_direct")
+            or alignment.get("matched_title_direct")
+            or alignment.get("matched_title_context")
+        )
+    return bool(alignment.get("matched_variants"))
+
+
+def _minimum_group_variant_coverage(interaction: dict[str, Any]) -> int:
+    group_context = _normalize(interaction.get("group_context"))
+    variants = _expected_group_variants(interaction)
+    if not variants:
+        return 1
+    if group_context in {"top_navigation", "menu"}:
+        return min(2, len(_normalized_list(interaction.get("element_variants"))) or len(variants))
+    if group_context == "shortcut_collection":
+        return min(2, len(_normalized_list(interaction.get("element_variants"))) or len(variants))
+    if group_context == "faq_collection":
+        return min(2, len(_normalized_list(interaction.get("element_variants"))) or len(variants))
+    if group_context == "card_collection":
+        return 1
+    return 1
+
+
+def _href_group_selector(interaction: dict[str, Any], items: list[dict[str, Any]]) -> str | None:
+    tag_values = {str(item.get("tag") or "").strip().lower() for item in items}
+    if tag_values != {"a"}:
+        return None
+    hrefs = [str(item.get("href") or "").strip() for item in items if str(item.get("href") or "").strip()]
+    if len(hrefs) < 2:
+        return None
+
+    group_context = _normalize(interaction.get("group_context"))
+    if group_context == "faq_collection" and all("/centro-de-ayuda/preguntas-frecuentes/" in href for href in hrefs):
+        return 'a[href*="/centro-de-ayuda/preguntas-frecuentes/"]'
+
+    common_prefix = hrefs[0]
+    for href in hrefs[1:]:
+        while common_prefix and not href.startswith(common_prefix):
+            common_prefix = common_prefix[:-1]
+    common_prefix = common_prefix.rstrip("-_/")
+    if len(common_prefix) >= 16 and common_prefix not in {"/personas", "https://www.bancolombia.com"}:
+        return f'a[href^="{common_prefix}"]'
+    return None
 
 
 def _dedupe_items_by_node_id(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -509,7 +602,6 @@ def _ancestor_selector_candidates(item: dict[str, Any]) -> list[dict[str, Any]]:
             selector_options.append((f"{tag}.{stable_classes[0]}", 35))
             if len(stable_classes) > 1:
                 selector_options.append((f"{tag}.{stable_classes[0]}.{stable_classes[1]}", 45))
-        selector_options.append((tag, 5))
 
         for selector, specificity in selector_options:
             if selector in seen:
@@ -552,7 +644,11 @@ def _common_ancestor_selectors(items: list[dict[str, Any]]) -> list[dict[str, An
     return results
 
 
-def _group_item_selector_candidates(container_selector: str, items: list[dict[str, Any]]) -> list[str]:
+def _group_item_selector_candidates(
+    container_selector: str,
+    items: list[dict[str, Any]],
+    interaction: dict[str, Any],
+) -> list[str]:
     tags = {str(item.get("tag") or "").strip().lower() for item in items if item.get("tag")}
     tag = next(iter(tags), "")
     if not tag:
@@ -565,16 +661,30 @@ def _group_item_selector_candidates(container_selector: str, items: list[dict[st
     common_classes = set.intersection(*class_sets) if class_sets else set()
 
     selectors: list[str] = []
+    href_selector = _href_group_selector(interaction, items)
+    if href_selector:
+        selectors.append(f"{container_selector} {href_selector}")
+
+    common_selector_candidates: set[str] | None = None
+    for item in items:
+        item_selectors = {str(selector).strip() for selector in (item.get("selector_candidates") or []) if selector}
+        common_selector_candidates = item_selectors if common_selector_candidates is None else common_selector_candidates & item_selectors
+    for selector in sorted(common_selector_candidates or []):
+        if is_unsafe_group_selector(selector):
+            continue
+        selectors.append(f"{container_selector} {selector}")
+
     ordered_common = sorted(common_classes)
     if ordered_common:
         selectors.append(f"{container_selector} {tag}.{ordered_common[0]}")
         if len(ordered_common) > 1:
             selectors.append(f"{container_selector} {tag}.{ordered_common[0]}.{ordered_common[1]}")
-    selectors.append(f"{container_selector} {tag}")
 
     unique: list[str] = []
     seen: set[str] = set()
     for selector in selectors:
+        if is_unsafe_group_selector(selector):
+            continue
         if selector in seen:
             continue
         seen.add(selector)
@@ -641,19 +751,45 @@ def _group_candidate_evidence(
         2,
     ) if unique_items else 0.0
 
+    expected_variants = _expected_group_variants(interaction)
+    minimum_variant_coverage = _minimum_group_variant_coverage(interaction)
+    item_match_limit = group_match_limit(len(expected_variants), len(unique_items))
+    group_context = _normalize(interaction.get("group_context"))
     promotion_blockers: list[str] = []
+    promotion_blockers.extend(selector_safety_blockers(item_selector, role="item"))
+    promotion_blockers.extend(selector_safety_blockers(container_selector, role="contenedor"))
     if origin != SELECTOR_ORIGIN_RENDERED:
         promotion_blockers.append("grupo no proviene de DOM renderizado verificado")
     if container_match_count == 0:
         promotion_blockers.append("selector de contenedor no existe en DOM observado")
+    if container_match_count > container_match_limit():
+        promotion_blockers.append(f"container_match_count excesivo ({container_match_count})")
     if item_match_count == 0:
         promotion_blockers.append("selector de item no existe en DOM observado")
+    if item_match_count > item_match_limit:
+        promotion_blockers.append(f"match_count global excesivo para grupo ({item_match_count})")
     if item_match_count < 2:
         promotion_blockers.append("selector de item colapsa el grupo a menos de 2 matches")
     if len(covered_items) < 2:
         promotion_blockers.append("selector de item no cubre suficientes nodos candidatos del grupo")
     if not covered_items:
         promotion_blockers.append("selector de item no demuestra soporte real para event.target.closest")
+    if len(matched_variants) < minimum_variant_coverage:
+        promotion_blockers.append(
+            f"variant_coverage insuficiente ({len(matched_variants)} < {minimum_variant_coverage})"
+        )
+    if not useful_visible_text([item.get("text") for item in covered_items]):
+        promotion_blockers.append("visible_text vacío o sin señales útiles")
+    outside_matches = max(0, item_match_count - len(covered_items))
+    if outside_matches > max(2, len(covered_items)):
+        promotion_blockers.append(
+            f"selector_item cubre nodos fuera del bloque esperado ({outside_matches} matches externos)"
+        )
+    if group_context == "faq_collection" and "href" not in item_selector.lower():
+        promotion_blockers.append("faq_collection requiere selector_item con href discriminante")
+    title_variants = set(_normalized_list(interaction.get("title_variants")))
+    if group_context == "card_collection" and title_variants and not (set(matched_variants) & title_variants):
+        promotion_blockers.append("card_collection sin título de card resuelto con confianza")
 
     can_promote = not promotion_blockers
     score = (
@@ -678,6 +814,9 @@ def _group_candidate_evidence(
         "candidate_group_item_count": len(unique_items),
         "matched_variants": matched_variants,
         "variant_coverage": len(matched_variants),
+        "minimum_variant_coverage": minimum_variant_coverage,
+        "group_match_limit": item_match_limit,
+        "outside_match_count": outside_matches,
         "average_zone_score": average_zone_score,
         "visible_text": [item.get("text") for item in covered_items[:5]],
         "context_text": [item.get("context_text") for item in covered_items[:3]],
@@ -751,8 +890,12 @@ def _select_group_interaction(
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     aligned_items: list[dict[str, Any]] = []
     for item in inventory:
+        if not _allowed_group_click_target(interaction, item):
+            continue
         alignment = _group_item_alignment(interaction, item)
         if not alignment["qualifies"]:
+            continue
+        if not _alignment_allowed_for_group_context(interaction, item, alignment):
             continue
         enriched = dict(item)
         enriched["__group_alignment__"] = alignment
@@ -766,7 +909,9 @@ def _select_group_interaction(
     traces: list[dict[str, Any]] = []
     for ancestor in ancestor_candidates:
         container_selector = ancestor["selector"]
-        for item_selector in _group_item_selector_candidates(container_selector, unique_items):
+        if is_unsafe_group_selector(container_selector):
+            continue
+        for item_selector in _group_item_selector_candidates(container_selector, unique_items, interaction):
             traces.append(
                 _group_candidate_evidence(
                     interaction=interaction,
@@ -872,6 +1017,10 @@ def propose_selectors(measurement_case: dict[str, Any], dom_snapshot: dict[str, 
                     "candidates": traces[:10],
                 }
             )
+            if interaction_mode == "group":
+                interaction["warnings"].append(
+                    "No se encontro selector grupal seguro variant-first; se rechazan selectores genericos, contenedores no discriminantes, variant_coverage insuficiente o match_count excesivo; human_review_required=true."
+                )
             continue
 
         promoted = bool(chosen.get("can_promote"))

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from core.processing.selectors.safety import group_match_limit, is_unsafe_group_selector
+
 
 def _to_js(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
@@ -31,6 +33,19 @@ def _build_selector_rules(measurement_case: dict[str, Any]) -> list[dict[str, An
         selector = interaction.get("selector_item") or interaction.get("selector_candidato") or interaction.get("selector_activador")
         if not selector:
             continue
+        if interaction_mode == "group":
+            container_selector = interaction.get("selector_contenedor")
+            expected_variants = list(interaction.get("element_variants") or []) + list(
+                interaction.get("title_variants") or []
+            )
+            if (
+                not interaction.get("selector_item")
+                or not container_selector
+                or is_unsafe_group_selector(selector)
+                or is_unsafe_group_selector(container_selector)
+                or int(interaction.get("match_count") or 0) > group_match_limit(len(expected_variants))
+            ):
+                continue
         rules.append(
             {
                 "mode": interaction_mode,

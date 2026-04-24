@@ -8,6 +8,12 @@ from core.processing.selectors.build_selectors import (
     SELECTOR_ORIGIN_RENDERED,
     SELECTOR_ORIGIN_REJECTED,
 )
+from core.processing.selectors.safety import (
+    container_match_limit,
+    group_match_limit,
+    is_unsafe_group_selector,
+    useful_visible_text,
+)
 
 
 def validate_selector_candidates(
@@ -106,6 +112,58 @@ def validate_selector_candidates(
                 "Selector grupal renderizado pero cubre menos de 2 items; se deja null."
             )
             continue
+        if interaction_mode == "group":
+            expected_variants = list(interaction.get("element_variants") or []) + list(
+                interaction.get("title_variants") or []
+            )
+            match_limit = group_match_limit(len(expected_variants), chosen.get("candidate_group_item_count"))
+            if is_unsafe_group_selector(interaction.get("selector_item")) or is_unsafe_group_selector(
+                interaction.get("selector_contenedor")
+            ):
+                interaction["selector_candidato"] = None
+                interaction["selector_contenedor"] = None
+                interaction["selector_item"] = None
+                interaction["selector_activador"] = None
+                interaction["warnings"].append(
+                    "Selector grupal rechazado por selector_item o selector_contenedor genérico/no discriminante; human_review_required=true."
+                )
+                continue
+            if int(chosen.get("variant_coverage") or 0) <= 0:
+                interaction["selector_candidato"] = None
+                interaction["selector_contenedor"] = None
+                interaction["selector_item"] = None
+                interaction["selector_activador"] = None
+                interaction["warnings"].append(
+                    "Selector grupal rechazado por variant_coverage=0; human_review_required=true."
+                )
+                continue
+            if int(interaction.get("match_count") or 0) > match_limit:
+                interaction["selector_candidato"] = None
+                interaction["selector_contenedor"] = None
+                interaction["selector_item"] = None
+                interaction["selector_activador"] = None
+                interaction["warnings"].append(
+                    f"Selector grupal rechazado por match_count global excesivo ({interaction['match_count']}); human_review_required=true."
+                )
+                continue
+            if int(chosen.get("container_match_count") or 0) > container_match_limit():
+                interaction["selector_candidato"] = None
+                interaction["selector_contenedor"] = None
+                interaction["selector_item"] = None
+                interaction["selector_activador"] = None
+                interaction["warnings"].append(
+                    f"Selector grupal rechazado por container_match_count excesivo ({chosen.get('container_match_count')}); human_review_required=true."
+                )
+                continue
+            if not useful_visible_text(chosen.get("visible_text")):
+                interaction["selector_candidato"] = None
+                interaction["selector_contenedor"] = None
+                interaction["selector_item"] = None
+                interaction["selector_activador"] = None
+                interaction["warnings"].append(
+                    "Selector grupal rechazado por visible_text vacío o sin señales útiles; human_review_required=true."
+                )
+                continue
 
     promoted_after_validation = sum(
         1 for interaction in measurement_case.get("interacciones", []) if interaction.get("selector_candidato")
