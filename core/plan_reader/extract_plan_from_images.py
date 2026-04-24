@@ -116,8 +116,10 @@ def discover_case_images(case_images_dir: Path) -> list[Path]:
     )
 
 
-def _normalize_space(value: str) -> str:
-    return re.sub(r"\s+", " ", value).strip()
+def _normalize_space(value):
+    if value is None:
+        return ""
+    return re.sub(r"\s+", " ", str(value)).strip()
 
 
 def _extract_urls(text: str) -> list[str]:
@@ -154,9 +156,13 @@ def _extract_variants(raw_value: str | None) -> list[str]:
     return variants
 
 
-def _stringify_variants(raw_value: str | None, variants: list[str]) -> str | None:
+def _stringify_variants(raw_value, variants):
     if variants:
-        return " | ".join(variants)
+        return "{{" + "|".join(variants) + "}}"
+
+    if raw_value is None:
+        return None
+
     return _normalize_space(raw_value)
 
 
